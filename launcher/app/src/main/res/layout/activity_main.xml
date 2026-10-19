@@ -2,14 +2,15 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/root"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#FF000000">
+    android:layout_height="match_parent">
+    <!-- No background here: MainActivity sets the theme colour, or none under a wallpaper. -->
 
     <!-- Ambient glow in the colour of the focused dock app. -->
     <View
         android:id="@+id/ambient"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:forceHasOverlappingRendering="false"
         android:alpha="0" />
 
     <!-- Top shelf: the focused dock app's name, positioned above the dock in code. -->
@@ -147,6 +148,24 @@
                 </LinearLayout>
             </LinearLayout>
 
+            <!-- Bitcoin price, change and block height (btc_ticker), right-aligned over the top buttons. -->
+            <TextView
+                android:id="@+id/btcTicker"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_alignParentEnd="true"
+                android:layout_above="@+id/topButtons"
+                android:layout_marginEnd="8dp"
+                android:layout_marginBottom="10dp"
+                android:singleLine="true"
+                android:textColor="#FFFFFFFF"
+                android:textSize="17sp"
+                android:fontFamily="@font/outfit"
+                android:fontVariationSettings="'wght' 500"
+                android:letterSpacing="0.02"
+                android:includeFontPadding="false"
+                android:visibility="gone" />
+
             <LinearLayout
                 android:id="@+id/topButtons"
                 android:layout_width="wrap_content"
@@ -201,6 +220,76 @@
                 android:scrollbars="none"
                 android:descendantFocusability="afterDescendants" />
         </FrameLayout>
+    </LinearLayout>
+
+    <!-- Now playing: the media session of the app playing in the background, right-aligned above the
+         dock and positioned in code. Hidden until there is one; see showNowPlaying. -->
+    <LinearLayout
+        android:id="@+id/nowPlaying"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end|top"
+        android:layout_marginEnd="56dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="12dp"
+        android:background="@drawable/now_playing_bg"
+        android:focusable="true"
+        android:clickable="true"
+        android:longClickable="true"
+        android:nextFocusUp="@+id/btnSettings"
+        android:alpha="0"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/nowPlayingArt"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:scaleType="centerCrop"
+            android:importantForAccessibility="no" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="14dp"
+            android:layout_marginEnd="14dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/nowPlayingTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:maxWidth="250dp"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:duplicateParentState="true"
+                android:textColor="@drawable/pill_text"
+                android:textSize="17sp"
+                android:fontFamily="@font/outfit"
+                android:fontVariationSettings="'wght' 500" />
+
+            <TextView
+                android:id="@+id/nowPlayingSubtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:maxWidth="250dp"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:duplicateParentState="true"
+                android:textColor="@drawable/pill_text_mid"
+                android:textSize="13sp"
+                android:fontFamily="@font/outfit" />
+        </LinearLayout>
+
+        <ImageView
+            android:id="@+id/nowPlayingState"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:layout_marginEnd="4dp"
+            android:duplicateParentState="true"
+            android:tint="@drawable/pill_text"
+            android:importantForAccessibility="no" />
     </LinearLayout>
 
     <!-- The single floating glass highlight that springs between tiles. -->

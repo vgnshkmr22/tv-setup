@@ -25,7 +25,8 @@ is reversible from the TV's own settings if the tools are gone.
 ## 2. Improve the launcher
 
 The launcher lives in `launcher/` and is deliberately small: plain Java, AndroidX RecyclerView and
-DynamicAnimation, no Kotlin, no Compose, no network. It targets TVs with 1 GB of RAM, so:
+DynamicAnimation, no Kotlin, no Compose, no network outside the updater
+([`docs/specs/self-update.md`](docs/specs/self-update.md)) and the opt-in Bitcoin line (`Ticker.java`). It targets TVs with 1 GB of RAM, so:
 
 - No blur, no video backgrounds, no polling, no background services.
 - Anything that depends on a specific TV goes in `app/src/main/res/values/config.xml`, not in code.

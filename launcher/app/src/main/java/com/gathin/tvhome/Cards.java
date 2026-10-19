@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Supplier;
 
 /**
  * Module cards (docs/specs/card.md): an installed app can declare a card for its tile, with its own
@@ -179,8 +180,11 @@ final class Cards {
      * Every valid card installed on this TV, with its state under the given records. One cheap
      * PackageManager query when no app declares a card; the app list is only walked when one does.
      * hidden is the launcher's hidden_apps as in force (config.xml or a theme overlay): no card for those.
+     * The decision records are only read when some app declares a card; leanback is the launcher's
+     * own LEANBACK_LAUNCHER query, so the app list isn't queried twice.
      */
-    static List<Card> discover(Context ctx, Set<String> hidden, Map<String, Record> records) {
+    static List<Card> discover(Context ctx, Set<String> hidden, Supplier<Map<String, Record>> recordSource,
+                               List<ResolveInfo> leanback) {
         if ((ctx.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) selfCheck();
         List<Card> out = new ArrayList<>();
         PackageManager pm = ctx.getPackageManager();
@@ -193,12 +197,12 @@ final class Cards {
             return out;
         }
         if (declared.isEmpty()) return out;
+        Map<String, Record> records = recordSource.get();
 
         // What the card must agree with: the activities shown as tiles, and the names already on screen.
         Set<String> tiles = new HashSet<>();
         Map<String, Set<String>> names = new HashMap<>();
-        for (ResolveInfo ri : pm.queryIntentActivities(
-                new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER), 0)) {
+        for (ResolveInfo ri : leanback) {
             if (ri.activityInfo == null) continue;
             String pkg = ri.activityInfo.packageName;
             tiles.add(new ComponentName(pkg, ri.activityInfo.name).flattenToString());
@@ -638,15 +642,29 @@ final class Cards {
      */
     @SuppressWarnings("deprecation")
     static String digest(PackageManager pm, String pkg) throws Exception {
+        return digest(pm.getPackageInfo(pkg, signerFlags()));
+    }
+
+    /** The PackageInfo flags {@link #digest(PackageInfo)} needs. */
+    @SuppressWarnings("deprecation")
+    static int signerFlags() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
+    }
+
+    /**
+     * The same digest from a PackageInfo read with {@link #signerFlags}: an installed package, or an
+     * APK file through getPackageArchiveInfo (the self-update check).
+     */
+    @SuppressWarnings("deprecation")
+    static String digest(PackageInfo pi) throws Exception {
         Signature[] sigs;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            PackageInfo pi = pm.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES);
             SigningInfo info = pi.signingInfo;
             if (info == null) throw new CardException("package has no signing certificate");
             if (info.hasMultipleSigners()) throw new CardException("package has more than one signer");
             sigs = info.getApkContentsSigners();
         } else {
-            PackageInfo pi = pm.getPackageInfo(pkg, PackageManager.GET_SIGNATURES);
             sigs = pi.signatures;
         }
         if (sigs == null || sigs.length != 1) {

@@ -20,4 +20,8 @@
     <string name="cant_open">无法打开 %1$s</string>
     <string name="date_format">M月d日 EEEE</string>
     <string name="dream_name">时钟</string>
+    <string name="tile_menu_move">移动</string>
+    <string name="tile_menu_app_info">应用信息</string>
+    <string name="move_started">正在移动 %1$s — 按 OK 放置，按返回取消</string>
+    <string name="move_not_saved">无法保存顺序</string>
 </resources>

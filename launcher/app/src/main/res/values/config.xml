@@ -58,6 +58,13 @@
          (most Android TVs don't; the tile only appears when the page exists). Off by default. -->
     <bool name="show_home_settings_shortcut">false</bool>
 
+    <!-- Remote button remap: open an app from any screen when a remote key is pressed, e.g. the dedicated
+         streaming button some remotes have. Semicolon-separated KEYCODE=package entries; the key is an
+         Android keycode name (KEYCODE_MEDIA_PLAY) or its number (126). Empty (the default) leaves every key
+         alone. Needs the InputKeyService accessibility service (INPUT_KEY_SERVICE=1); KEYCODE_TV stays
+         reserved for the input switcher. -->
+    <string name="key_launch_map" translatable="false"></string>
+
     <!-- Module cards: an app that declares a card (docs/specs/card.md) can stand in for its tile with its own
          label, caption and glow colour, once you answer Show on the prompt. false: never look for cards or ask. -->
     <bool name="module_cards">true</bool>

@@ -21,4 +21,8 @@
     <string name="date_format">EEEE, d. MMMM</string>
     <string name="dream_name">Uhr</string>
     <string name="input_key_service_description">Öffnet die Quellenauswahl, wenn die Input-Taste der Fernbedienung gedrückt wird.</string>
+    <string name="tile_menu_move">Verschieben</string>
+    <string name="tile_menu_app_info">App-Info</string>
+    <string name="move_started">%1$s wird verschoben — OK setzt ab, Zurück bricht ab</string>
+    <string name="move_not_saved">Reihenfolge konnte nicht gespeichert werden</string>
 </resources>

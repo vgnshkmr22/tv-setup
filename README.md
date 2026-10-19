@@ -175,6 +175,7 @@ network, no background services. It needs JDK 17 and Android SDK platform 34 to 
   `tools/tv.py 'settings put secure screensaver_components com.gathin.tvhome/.ClockDream; settings put secure screensaver_enabled 1'`
 - **Remote keys**: an optional accessibility service keeps the remote's Input button working on Google TV (`INPUT_KEY_SERVICE=1` at install), another fixes sticks whose Home key sends ALL_APPS (`HOME_KEY_SERVICE=1`).
 - **Navigation** is deliberate: Up and Down move one row, the top buttons never fall through to tiles, the last focused app is remembered, and installing or removing an app refreshes the tiles while Home is open.
+- **Rearranging**: hold OK on a tile for **Move** / **App info**. In Move, the D-pad steps the tile one place or one row, OK places it, Back cancels; moving into the dock pins it (swapping with the app it replaces), moving out unpins, and the **Default home** tile never moves. Your order is kept in `order.json` in the launcher's private files, so themes leave it alone and new apps land after your tiles. To start over: Settings → Apps → Home → Clear data, or `tools/tv.py 'pm clear com.gathin.tvhome'` + `cmd package set-home-activity --user 0 com.gathin.tvhome/.MainActivity`.
 
 ## Restoring your TV
 

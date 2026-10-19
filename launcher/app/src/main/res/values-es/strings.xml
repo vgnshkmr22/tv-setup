@@ -20,4 +20,8 @@
     <string name="cant_open">No se puede abrir %1$s</string>
     <string name="date_format">EEEE d \'de\' MMMM</string>
     <string name="dream_name">Reloj</string>
+    <string name="tile_menu_move">Mover</string>
+    <string name="tile_menu_app_info">Información de la app</string>
+    <string name="move_started">Moviendo %1$s — OK coloca, Atrás cancela</string>
+    <string name="move_not_saved">No se pudo guardar el orden</string>
 </resources>

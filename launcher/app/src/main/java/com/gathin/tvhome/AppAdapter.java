@@ -1,6 +1,5 @@
 package com.gathin.tvhome;
 
-import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -12,7 +11,6 @@ import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
-import android.net.Uri;
 import android.provider.Settings;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -37,8 +35,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * App tiles. The first {@link MainActivity#COLUMNS} positions are the pinned dock (favourites, fixed order),
- * then the module cards the owner chose to show (by label), the rest is alphabetical.
+ * App tiles. The first {@link MainActivity#COLUMNS} positions are the dock, the rest is the grid.
+ * The default order is the configured dock (favourites), then the module cards the owner chose to
+ * show (by label), then alphabetical; a saved order (Order, order.json) replaces it tile by tile.
  */
 public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
 
@@ -47,6 +46,12 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
 
         /** Called for a D-pad direction key on a tile. Return true when handled (focus stays put). */
         boolean onTileVerticalKey(int position, int keyCode);
+
+        /** The tile's OK. Return true when handled (move mode places the tile); false launches the app. */
+        boolean onTileClick(int position);
+
+        /** Hold OK on a tile (the tile menu). Return true when handled (always but the empty grid). */
+        boolean onTileLongClick(int position, View card);
     }
 
     static final class Entry {
@@ -107,7 +112,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     private final Context ctx;
     private final TileListener listener;
     private final int dockSize;
-    /** Dock order (config.xml dock_apps, or a theme's config.json). */
+    /** The configured dock order (config.xml dock_apps, or a theme's config.json): the fill for a saved dock. */
     private final List<String> favourites;
     /** Never shown as tiles (res/values/config.xml, hidden_apps). */
     private final Set<String> hidden;
@@ -129,8 +134,10 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     /**
      * Rebuilds the tiles. A shown module card stands in for every tile of its package (same component,
      * so focus follows it); hidden_apps wins over a card, and a card's package in dock_apps takes that slot.
+     * The owner's saved order (order.json) places the tiles; anything it does not list follows in the
+     * default order: the configured dock apps, then the cards, then alphabetical.
      */
-    void reload(List<Cards.Card> cards) {
+    void reload(List<Cards.Card> cards, Order order) {
         PackageManager pm = ctx.getPackageManager();
         Intent probe = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
         List<ResolveInfo> found = pm.queryIntentActivities(probe, 0);
@@ -165,15 +172,22 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
             if (ca != cb) return ca ? -1 : 1;
             return a.label.compareToIgnoreCase(b.label);
         });
+        // The owner's arrangement: the dock first (filled from the configured dock), then the grid,
+        // then the apps that are new or that the order file never listed.
+        List<Order.App> apps = new ArrayList<>();
+        for (Entry e : fresh) apps.add(new Order.App(e.component.flattenToShortString(), e.pkg));
+        List<Integer> placed = Order.sequence(apps, order.dock, order.grid, favourites, dockSize);
+        List<Entry> sorted = new ArrayList<>(fresh.size());
+        for (int i : placed) sorted.add(fresh.get(i));
         // Optional "Default home" tile (config.xml), only when this TV actually has a home-screen picker.
         if (showHomeSettings
                 && pm.resolveActivity(new Intent(Settings.ACTION_HOME_SETTINGS), 0) != null) {
-            fresh.add(new Entry(Entry.HOME_SETTINGS, ctx.getString(R.string.home_settings),
+            sorted.add(new Entry(Entry.HOME_SETTINGS, ctx.getString(R.string.home_settings),
                     new ComponentName(ctx, HomeSettingsActivity.class), null,
                     ctx.getDrawable(R.drawable.ic_home_settings), null, 0));
         }
         items.clear();
-        items.addAll(fresh);
+        items.addAll(sorted);
         notifyDataSetChanged();
     }
 
@@ -204,7 +218,11 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         h.name.setText(e.name);
         h.name.setVisibility(position < dockSize ? View.INVISIBLE : View.VISIBLE);   // the dock has no labels
         boolean focused = h.card.isFocused();   // a rebind after reload() can hit the focused tile
+        // Set the label here and now: a leftover focus animation would otherwise keep it on the
+        // wrong tile after a swap (stable IDs can hand a holder a different entry).
+        h.name.animate().cancel();
         h.name.setAlpha(focused ? 1f : 0f);
+        h.name.setTranslationY(focused ? 4 * ctx.getResources().getDisplayMetrics().density : -6 * ctx.getResources().getDisplayMetrics().density);
         h.card.setScaleX(focused ? FOCUS_SCALE : 1f);
         h.card.setScaleY(focused ? FOCUS_SCALE : 1f);
         if (e.banner != null) {
@@ -220,15 +238,14 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
             h.label.setText(e.label);
             h.label.setVisibility(View.VISIBLE);
         }
-        h.card.setOnClickListener(v -> launch(e));
+        h.card.setOnClickListener(v -> {
+            int pos = h.getBindingAdapterPosition();
+            if (listener != null && pos != RecyclerView.NO_POSITION && listener.onTileClick(pos)) return;
+            launch(e);
+        });
         h.card.setOnLongClickListener(v -> {
-            Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + e.pkg));
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            try {
-                ctx.startActivity(i);
-            } catch (ActivityNotFoundException ignored) {
-            }
-            return true;
+            int pos = h.getBindingAdapterPosition();
+            return listener != null && pos != RecyclerView.NO_POSITION && listener.onTileLongClick(pos, h.card);
         });
     }
 
@@ -272,6 +289,34 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
             if (items.get(i).component.flattenToShortString().equals(key)) return i;
         }
         return -1;
+    }
+
+    /** Package of the app at a position, or null. */
+    String pkgAt(int position) {
+        return position >= 0 && position < items.size() ? items.get(position).pkg : null;
+    }
+
+    /** Tiles the owner may move: everything except the trailing "Default home" tile. */
+    int movableCount() {
+        int n = items.size();
+        return n > 0 && items.get(n - 1).kind == Entry.HOME_SETTINGS ? n - 1 : n;
+    }
+
+    /** Whether the tile at a position may be moved (the "Default home" tile may not). */
+    boolean movableAt(int position) {
+        return position >= 0 && position < movableCount();
+    }
+
+    /** Swaps the two tiles (move mode): the views stay in place and rebind to their new entries. */
+    void swap(int a, int b) {
+        if (a == b || !movableAt(a) || !movableAt(b)) return;
+        Collections.swap(items, a, b);
+    }
+
+    /** Rebinds the swapped tiles. Called once focus has settled, so the name labels are exact. */
+    void rebindSwapped(int a, int b) {
+        if (a == b) return;
+        notifyItemRangeChanged(Math.min(a, b), Math.abs(a - b) + 1);
     }
 
     String labelAt(int position) {

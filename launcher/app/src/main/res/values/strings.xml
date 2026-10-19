@@ -46,4 +46,8 @@
     <string name="card_state_new">New</string>
     <string name="card_state_new_key">New key</string>
     <string name="card_state_new_label">New name</string>
+    <string name="tile_menu_move">Move</string>
+    <string name="tile_menu_app_info">App info</string>
+    <string name="move_started">Moving %1$s — OK places it, Back cancels</string>
+    <string name="move_not_saved">Couldn\'t save the order</string>
 </resources>

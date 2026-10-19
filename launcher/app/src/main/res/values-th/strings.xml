@@ -21,4 +21,8 @@
     <string name="date_format">EEEE  d MMMM</string>
     <string name="dream_name">นาฬิกา</string>
 
+    <string name="tile_menu_move">ย้าย</string>
+    <string name="tile_menu_app_info">ข้อมูลแอป</string>
+    <string name="move_started">กำลังย้าย %1$s — กด OK เพื่อวาง กดย้อนกลับเพื่อยกเลิก</string>
+    <string name="move_not_saved">ไม่สามารถบันทึกลำดับได้</string>
 </resources>

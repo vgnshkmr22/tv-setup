@@ -20,4 +20,8 @@
     <string name="cant_open">Impossible d\'ouvrir %1$s</string>
     <string name="date_format">EEEE d MMMM</string>
     <string name="dream_name">Horloge</string>
+    <string name="tile_menu_move">Déplacer</string>
+    <string name="tile_menu_app_info">Infos sur l\'app</string>
+    <string name="move_started">Déplacement de %1$s — OK place, Retour annule</string>
+    <string name="move_not_saved">Impossible d\'enregistrer l\'ordre</string>
 </resources>

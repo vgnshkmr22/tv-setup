@@ -116,6 +116,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private boolean promptsPaused;
     /** The Inputs or Module cards dropdown while one is open, so onPause can close it. */
     private PopupWindow openPopup;
+    /** Position of the tile being moved (hold OK → Move), or -1 when not moving. */
+    private int movePos = -1;
+    /** A package change arrived during a move: the refresh lands once the move ends. */
+    private boolean reloadPending;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     /** Refreshes the network pill when the connection changes: at boot Wi-Fi often connects after Home is shown. */
@@ -217,6 +221,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         grid.setLayoutManager(new GridLayoutManager(this, COLUMNS));
         grid.setHasFixedSize(true);
         grid.setItemAnimator(null);
+        // A move reassigns tiles between slots; without this RecyclerView gives focus back to the
+        // same item id after each rebind, which is the wrong slot mid-move. focusTile sets it.
+        grid.setPreserveFocusAfterLayout(false);
         grid.addItemDecoration(new DockDecoration(COLUMNS, density));
         grid.setLayoutAnimation(new LayoutAnimationController(
                 AnimationUtils.loadAnimation(this, R.anim.tile_enter), 0.06f));
@@ -366,6 +373,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     /** Rebuilds the tiles (and the module cards), then puts focus back where it was. */
     private void reloadApps(boolean animate) {
+        // A move in progress owns the arrangement on screen; the refresh lands after it ends.
+        if (movePos >= 0) {
+            reloadPending = true;
+            return;
+        }
         // Capture the app before rebinding can move focus and overwrite its key.
         final String returnKey = lastFocusedKey;
         final int returnSlot = lastFocused;
@@ -406,7 +418,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         final int returnSlot = lastFocused;
         final List<Cards.Card> none = Collections.emptyList();
         cards = moduleCards ? CardFeature.run(() -> Cards.discover(this, hiddenApps, Cards.load(Cards.storeFile(this))), none) : none;
-        adapter.reload(cards.isEmpty() ? none : CardFeature.run(() -> Cards.shown(cards), none));
+        adapter.reload(cards.isEmpty() ? none : CardFeature.run(() -> Cards.shown(cards), none),
+                Order.load(Order.storeFile(this)));
         lastFocusedKey = returnKey;
         lastFocused = returnSlot;
     }
@@ -418,7 +431,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private void restoreFocus() {
         final String returnKey = lastFocusedKey;
         final int returnSlot = lastFocused;
-        grid.post(() -> {
+        afterLayout(() -> {
             int pos = adapter.positionOf(returnKey);
             focusTile(pos >= 0 ? pos : returnSlot);
             tilesReady = true;
@@ -431,6 +444,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         super.onPause();
         unregisterReceiver(packageReceiver);
         handler.removeCallbacks(minuteTick);
+        // Leaving Home cancels a move (nothing was saved); onResume rebuilds the tiles anyway.
+        movePos = -1;
         // Nothing of ours stays on screen over another app; an undecided prompt simply returns next time.
         if (cardPrompt != null) cardPrompt.dismiss();
         if (openPopup != null) openPopup.dismiss();
@@ -456,7 +471,43 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     @Override
     public void onBackPressed() {
+        if (movePos >= 0) {
+            cancelMove();   // Back during a move cancels it; every tile returns to its old place.
+            return;
+        }
         // Home screen: Back goes nowhere.
+    }
+
+    /**
+     * During a move the keys belong to the moving tile, whatever view ended up with focus (closing
+     * the menu can leave it on a top button). Handling them here, before any view, keeps the D-pad
+     * deterministic: the directions move the tile, OK places it, Back cancels.
+     */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (movePos >= 0) {
+            int code = event.getKeyCode();
+            boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
+            switch (code) {
+                case KeyEvent.KEYCODE_DPAD_UP:
+                case KeyEvent.KEYCODE_DPAD_DOWN:
+                case KeyEvent.KEYCODE_DPAD_LEFT:
+                case KeyEvent.KEYCODE_DPAD_RIGHT:
+                    if (down) moveKey(code);
+                    return true;
+                case KeyEvent.KEYCODE_DPAD_CENTER:
+                case KeyEvent.KEYCODE_ENTER:
+                case KeyEvent.KEYCODE_NUMPAD_ENTER:
+                    if (down && event.getRepeatCount() == 0) commitMove();
+                    return true;
+                case KeyEvent.KEYCODE_BACK:
+                    if (down && event.getRepeatCount() == 0) cancelMove();
+                    return true;
+                default:
+                    break;
+            }
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     // ---- glass highlight -------------------------------------------------------------------------
@@ -566,6 +617,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     @Override
     public boolean onTileVerticalKey(int position, int keyCode) {
+        if (movePos >= 0) return moveKey(keyCode);
         int count = adapter.getItemCount();
         int target;
         // Horizontal: swallow the key at a row's ends so focus never wraps to the next row or
@@ -596,24 +648,222 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         final int pos = Math.max(0, Math.min(position, adapter.getItemCount() - 1));
         RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(pos);
         if (vh != null) {
+            clearPendingFocus();
             View card = vh.itemView.findViewById(R.id.card);
             // Already focused (e.g. back from an app): no focus change fires, so restore the glass by hand.
             if (card.isFocused()) onTileFocused(pos, card);
             else card.requestFocus();
             return;
         }
-        // Not laid out yet: scroll there, then focus once the scroll settles.
-        grid.addOnScrollListener(new RecyclerView.OnScrollListener() {
+        // Not laid out yet: scroll there, then focus once the scroll settles. At most one such
+        // request is kept: a leftover listener would steal focus (and move a tile!) on a later scroll.
+        clearPendingFocus();
+        RecyclerView.OnScrollListener waiter = new RecyclerView.OnScrollListener() {
             @Override
             public void onScrollStateChanged(@NonNull RecyclerView rv, int newState) {
                 if (newState != RecyclerView.SCROLL_STATE_IDLE) return;
-                rv.removeOnScrollListener(this);
+                clearPendingFocus();
                 RecyclerView.ViewHolder h = rv.findViewHolderForAdapterPosition(pos);
-                View target = h != null ? h.itemView.findViewById(R.id.card) : rv.getChildAt(0);
+                View target = h != null ? h.itemView.findViewById(R.id.card) : null;
                 if (target != null) target.requestFocus();
             }
-        });
+        };
+        pendingFocus = waiter;
+        grid.addOnScrollListener(waiter);
         grid.smoothScrollToPosition(pos);
+    }
+
+    private RecyclerView.OnScrollListener pendingFocus;
+
+    /** Runs the action once the next layout pass has settled (the layout lands on the next frame). */
+    private void afterLayout(Runnable action) {
+        grid.postDelayed(action, 64);
+    }
+
+    private void clearPendingFocus() {
+        if (pendingFocus != null) {
+            grid.removeOnScrollListener(pendingFocus);
+            pendingFocus = null;
+        }
+    }
+
+    // ---- tile menu and move mode (hold OK) -------------------------------------------------------
+
+    @Override
+    public boolean onTileClick(int position) {
+        if (movePos < 0) return false;
+        commitMove();   // OK during a move places the tile
+        return true;
+    }
+
+    @Override
+    public boolean onTileLongClick(int position, View card) {
+        if (movePos >= 0) {
+            commitMove();   // hold OK is plain OK during a move; the menu never opens mid-move
+            return true;
+        }
+        showTileMenu(position, card);
+        return true;
+    }
+
+    /**
+     * Hold OK on a tile: a small menu with Move (pick the tile up) and App info (the system page for
+     * the app, what holding OK did before). The "Default home" tile is not an app and cannot be
+     * moved, so its menu has App info alone.
+     */
+    private void showTileMenu(int position, View card) {
+        final String key = adapter.keyAt(position);
+        final String pkg = adapter.pkgAt(position);
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        final PopupWindow popup = glassPopup(panel, (int) (170 * density));
+        // On dismissal the window manager gives the top bar focus back before this runs; refocus the
+        // tile on the next pass (posted) so a touch-opened menu cannot leave focus on a pill.
+        popup.setOnDismissListener(() -> {
+            if (openPopup == popup) openPopup = null;
+            if (movePos < 0) afterLayout(() -> focusTile(adapter.positionOf(key)));
+        });
+        if (adapter.movableAt(position)) {
+            addMenuRow(rows, popup, R.string.tile_menu_move, () -> {
+                int pos = adapter.positionOf(key);
+                if (pos >= 0) enterMoveMode(pos);
+            });
+        }
+        addMenuRow(rows, popup, R.string.tile_menu_app_info, () -> openAppInfo(pkg));
+
+        // Hang it under the tile, flipped above it when the tile sits too low (the dock row).
+        panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        int width = Math.max((int) (170 * density), panel.getMeasuredWidth());
+        int height = panel.getMeasuredHeight();
+        popup.setWidth(width);
+        int[] at = new int[2];
+        card.getLocationInWindow(at);
+        int x = Math.max(0, Math.min(at[0] + card.getWidth() / 2 - width / 2, root.getWidth() - width));
+        int y = at[1] + card.getHeight() + (int) (8 * density);
+        if (y + height > root.getHeight()) y = at[1] - (int) (8 * density) - height;
+        popup.showAtLocation(root, Gravity.NO_GRAVITY, x, Math.max(0, y));
+        panel.setAlpha(0f);
+        panel.animate().alpha(1f).setDuration(160).start();
+        rows.getChildAt(0).requestFocus();
+    }
+
+    /** One menu row (the Inputs row layout without its icon and status). OK runs the action. */
+    private void addMenuRow(LinearLayout rows, PopupWindow popup, int titleRes, Runnable action) {
+        View row = getLayoutInflater().inflate(R.layout.item_input, rows, false);
+        row.findViewById(R.id.icon).setVisibility(View.GONE);
+        row.findViewById(R.id.dot).setVisibility(View.GONE);
+        row.findViewById(R.id.status).setVisibility(View.GONE);
+        ((TextView) row.findViewById(R.id.title)).setText(titleRes);
+        row.setOnClickListener(v -> {
+            popup.dismiss();
+            action.run();
+        });
+        // The hold that opens the menu ends in a bare OK-up on this row: only a press this row saw
+        // from its down event may activate it. Left and Right stay in the menu, Back leaves it.
+        final boolean[] pressed = {false};
+        row.setOnKeyListener((v, keyCode, event) -> {
+            if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    if (event.getRepeatCount() == 0) pressed[0] = true;
+                    return true;
+                }
+                boolean go = pressed[0];
+                pressed[0] = false;
+                if (go) {
+                    popup.dismiss();
+                    action.run();
+                }
+                return true;
+            }
+            if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) return true;
+            if (keyCode == KeyEvent.KEYCODE_DPAD_UP) return v == rows.getChildAt(0);
+            return keyCode == KeyEvent.KEYCODE_DPAD_DOWN && v == rows.getChildAt(rows.getChildCount() - 1);
+        });
+        rows.addView(row);
+    }
+
+    /** The system page for the app: what holding OK on a tile did before the menu. */
+    private void openAppInfo(String pkg) {
+        Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + pkg));
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(i);
+        } catch (ActivityNotFoundException ignored) {
+        }
+    }
+
+    /** Picks the tile up: the D-pad moves it, OK places it, Back cancels. */
+    private void enterMoveMode(int position) {
+        movePos = position;
+        // Delayed: the menu's popup is dismissed first, and the window manager refocuses its own way.
+        afterLayout(() -> focusTile(position));   // the keys need the tile focused, not a top button
+        Toast.makeText(this, getString(R.string.move_started, adapter.labelAt(position)), Toast.LENGTH_LONG).show();
+    }
+
+    /** Places the tile and saves the arrangement (order.json); focus stays on the same app. */
+    private void commitMove() {
+        if (movePos < 0) return;
+        movePos = -1;
+        // The dock is the first COLUMNS tiles, the grid is everything below. A package with more
+        // than one tile keeps only its dock slot: one key can appear only once in the file.
+        List<String> dock = new ArrayList<>(), grid = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        int n = adapter.movableCount();
+        for (int i = 0; i < n; i++) {
+            if (i < COLUMNS) {
+                if (seen.add(adapter.pkgAt(i))) dock.add(adapter.pkgAt(i));
+            } else {
+                grid.add(adapter.keyAt(i));
+            }
+        }
+        if (!Order.save(Order.storeFile(this), new Order(dock, grid))) {
+            Toast.makeText(this, R.string.move_not_saved, Toast.LENGTH_SHORT).show();
+        }
+        reloadPending = false;
+        reloadApps(false);   // rebuild from the saved order and refocus the same app
+    }
+
+    /** Puts every tile back where it was and leaves move mode; nothing was saved. */
+    private void cancelMove() {
+        if (movePos < 0) return;
+        movePos = -1;
+        reloadPending = false;
+        reloadApps(false);   // the saved order is untouched: the tiles come back to their old places
+    }
+
+    /**
+     * Moves the picked tile one step, to the tile that has focus in that direction in normal
+     * navigation. A direction that navigation swallows (row ends, the dock row moving up) leaves the
+     * tile where it is: nothing wraps. Moving into the dock row pins the app — it swaps with the app
+     * it replaces, which lands in the grid — and moving out unpins it the same way.
+     */
+    private boolean moveKey(int keyCode) {
+        int position = movePos;
+        int movable = adapter.movableCount();
+        int target = -1;
+        if (position < movable) {
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                if (position % COLUMNS != 0) target = position - 1;
+            } else if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                if (position % COLUMNS != COLUMNS - 1 && position + 1 < movable) target = position + 1;
+            } else if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+                if (position >= COLUMNS) target = position - COLUMNS;
+            } else {
+                int lastRowStart = ((movable - 1) / COLUMNS) * COLUMNS;
+                if (position < lastRowStart) target = Math.min(position + COLUMNS, movable - 1);
+            }
+        }
+        final int destination = target;
+        if (destination >= 0 && destination != position) {
+            adapter.swap(position, destination);
+            movePos = destination;
+            adapter.rebindSwapped(position, destination);
+            // With stable ids the moving tile's view rides along with its entry and keeps focus; once
+            // the layout has settled, focusTile finds it at the new slot and re-aims the glass.
+            afterLayout(() -> focusTile(destination));
+        }
+        return true;
     }
 
     // ---- top bar ---------------------------------------------------------------------------------
@@ -910,7 +1160,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      * the next one follows as soon as this one is answered. Nothing is shown until the owner says Show.
      */
     private void showCardPrompt() {
-        if (!moduleCards || !tilesReady || promptsPaused || cardPrompt != null || !hasWindowFocus() || isFinishing()) return;
+        if (!moduleCards || !tilesReady || promptsPaused || cardPrompt != null || movePos >= 0
+                || !hasWindowFocus() || isFinishing()) return;
         if (cards.isEmpty() || !CardFeature.working()) return;
         CardFeature.run(() -> {
             showCardPromptNow();

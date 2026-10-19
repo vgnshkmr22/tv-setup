@@ -2,6 +2,15 @@ plugins {
     id 'com.android.application'
 }
 
+// Self-update (docs/specs/self-update.md). CI sets these for the official channel; a build on the owner's
+// computer leaves them empty, which compiles the updater in but leaves it inert and keeps INTERNET out.
+def updateFeed = (findProperty('updateFeed') ?: '').toString().trim()
+def updateSigner = (findProperty('updateSigner') ?: '').toString().trim().toLowerCase()
+if (!updateFeed.isEmpty() && !(updateSigner ==~ /[0-9a-f]{64}/)) {
+    throw new GradleException('updateSigner must be the 64 hex SHA-256 of the release certificate when updateFeed is set')
+}
+def releaseKeystore = findProperty('releaseKeystore')
+
 android {
     namespace 'com.gathin.tvhome'
     compileSdk 34
@@ -10,8 +19,37 @@ android {
         applicationId 'com.gathin.tvhome'
         minSdk 26
         targetSdk 34
-        versionCode 3
-        versionName '2.2'
+        versionCode((findProperty('versionCode') ?: '3').toString().toInteger())
+        versionName((findProperty('versionName') ?: '2.2').toString())
+        buildConfigField 'String', 'UPDATE_FEED', '"' + updateFeed + '"'
+        buildConfigField 'String', 'UPDATE_SIGNER', '"' + updateSigner + '"'
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    signingConfigs {
+        if (releaseKeystore) {
+            release {
+                storeFile file(releaseKeystore)
+                storePassword findProperty('releaseKeystorePassword')
+                keyAlias findProperty('releaseKeyAlias')
+                keyPassword findProperty('releaseKeyPassword')
+                enableV2Signing true
+                // v3 lets a later key rotation reach TVs without a reinstall over ADB.
+                enableV3Signing true
+            }
+        }
+    }
+
+    // Without a feed the updater can never run, so its install permission stays out of the manifest
+    // (src/noFeed removes it in the merge). INTERNET stays: the Bitcoin line uses it when switched on.
+    if (updateFeed.isEmpty()) {
+        sourceSets {
+            debug.manifest.srcFile 'src/noFeed/AndroidManifest.xml'
+            release.manifest.srcFile 'src/noFeed/AndroidManifest.xml'
+        }
     }
 
     buildTypes {
@@ -20,8 +58,9 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            // Sideloaded over ADB, never published: sign with the debug key so it installs over a debug build.
-            signingConfig signingConfigs.debug
+            // Official builds (CI) sign with the release key. A build on the owner's computer is sideloaded
+            // over ADB, never published: sign with the debug key so it installs over a debug build.
+            signingConfig releaseKeystore ? signingConfigs.release : signingConfigs.debug
         }
     }
 
@@ -36,4 +75,6 @@ dependencies {
     implementation 'androidx.dynamicanimation:dynamicanimation:1.0.0'
     // Test only (never in the APK): plain JVM tests for the module card validators, src/test.
     testImplementation 'junit:junit:4.13.2'
+    // android.jar's org.json is a stub on the JVM; the real one for the update feed and state tests.
+    testImplementation 'org.json:json:20231013'
 }

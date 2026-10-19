@@ -130,10 +130,8 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
      * Rebuilds the tiles. A shown module card stands in for every tile of its package (same component,
      * so focus follows it); hidden_apps wins over a card, and a card's package in dock_apps takes that slot.
      */
-    void reload(List<Cards.Card> cards) {
+    void reload(List<Cards.Card> cards, List<ResolveInfo> found) {
         PackageManager pm = ctx.getPackageManager();
-        Intent probe = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
-        List<ResolveInfo> found = pm.queryIntentActivities(probe, 0);
         Map<String, Cards.Card> cardByPkg = new HashMap<>();
         for (Cards.Card c : cards) cardByPkg.put(c.pkg, c);
         List<Entry> fresh = new ArrayList<>();
@@ -146,7 +144,8 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
             if (card != null && !card.component.equals(component)) continue;   // the card stands in for this tile
             Drawable banner = ri.activityInfo.loadBanner(pm);
             if (banner == null) banner = ri.activityInfo.applicationInfo.loadBanner(pm);
-            Drawable icon = ri.loadIcon(pm);
+            // The icon is only drawn (and sampled for the glow) when there is no banner.
+            Drawable icon = banner == null ? ri.loadIcon(pm) : null;
             if (card != null) {
                 fresh.add(new Entry(Entry.CARD, card.label, component, banner, icon, card.caption, card.accent));
             } else {
@@ -174,6 +173,12 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         }
         items.clear();
         items.addAll(fresh);
+        notifyDataSetChanged();
+    }
+
+    /** Lets go of every tile and its artwork (Home is in the background and memory is short). */
+    void clear() {
+        items.clear();
         notifyDataSetChanged();
     }
 

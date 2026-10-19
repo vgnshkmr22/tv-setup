@@ -153,9 +153,12 @@ any violation drops that one card, with a log line and no other effect.
 
 ## Security
 
-- The launcher never installs, downloads, enables or disables anything, binds no service, loads no
+- The card code never installs, downloads, enables or disables anything, binds no service, loads no
   code, views or resources from a module beyond the one XML file and the label and artwork every
-  tile already uses, and has no network permission.
+  tile already uses, and never uses the network. The launcher's network use is the updater,
+  which talks to the update feed and nothing else, and only when `self_update` isn't `off` and the
+  build has a feed ([`self-update.md`](self-update.md)), and the Bitcoin line (`btc_ticker`, off by
+  default), which talks to three fixed price and block-height endpoints.
 - Nothing is shown until the owner says so, and the answer is pinned to the signing key. The owner
   judges a package name and an app label; the launcher judges the digest.
 - A card can only make its own activity look different; it cannot start anything else. Launching it

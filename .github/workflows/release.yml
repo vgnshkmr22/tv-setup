@@ -1,0 +1,141 @@
+# Builds the official launcher APK for a tag vX.Y.Z, signs it with the release key and attaches it to
+# the release with the update.json feed the launcher reads (docs/specs/self-update.md, docs/RELEASING.md).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    # Holds the signing secrets; protect it with required reviewers (docs/RELEASING.md).
+    environment: release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Version from the tag
+        run: |
+          if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::tag $TAG is not vMAJOR.MINOR.PATCH; pre-releases are not served to TVs"; exit 1
+          fi
+          major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]} patch=${BASH_REMATCH[3]}
+          if (( 10#$minor > 99 || 10#$patch > 99 )); then echo "::error::minor and patch must be below 100"; exit 1; fi
+          code=$(( 10#$major * 10000 + 10#$minor * 100 + 10#$patch ))
+          # version_code has to go up: compare with the newest other release that has a feed.
+          prev=0
+          for t in $(gh release list -R "$REPO" --limit 50 --exclude-drafts --exclude-pre-releases --json tagName -q '.[].tagName'); do
+            [ "$t" = "$TAG" ] && continue
+            if gh release download "$t" -R "$REPO" -p update.json -O "$RUNNER_TEMP/prev.json" 2>/dev/null; then
+              prev=$(jq -r .version_code "$RUNNER_TEMP/prev.json"); echo "previous feed: $t, version_code $prev"; break
+            fi
+          done
+          if (( code <= prev )); then echo "::error::version_code $code is not above the previous release's $prev"; exit 1; fi
+          echo "VERSION_NAME=$major.$minor.$patch" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$code" >> "$GITHUB_ENV"
+          echo "version $major.$minor.$patch, version_code $code"
+
+      - name: Release key
+        env:
+          RELEASE_KEYSTORE: ${{ secrets.RELEASE_KEYSTORE }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        run: |
+          [ -n "$RELEASE_KEYSTORE" ] || { echo "::error::RELEASE_KEYSTORE is not set for the release environment"; exit 1; }
+          printf '%s' "$RELEASE_KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+          signer=$(keytool -list -v -keystore "$RUNNER_TEMP/release.jks" -storepass:env RELEASE_KEYSTORE_PASSWORD \
+                     -alias "$RELEASE_KEY_ALIAS" | sed -n 's/^[[:space:]]*SHA256: *//p' | tr -d ':' | tr 'A-F' 'a-f')
+          [[ "$signer" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::could not read the release certificate's SHA-256"; exit 1; }
+          echo "UPDATE_SIGNER=$signer" >> "$GITHUB_ENV"
+          echo "release certificate SHA-256 $signer"
+
+      - name: Build
+        working-directory: launcher
+        env:
+          ORG_GRADLE_PROJECT_updateFeed: https://github.com/${{ github.repository }}/releases/latest/download/update.json
+          ORG_GRADLE_PROJECT_releaseKeystorePassword: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_releaseKeyAlias: ${{ secrets.RELEASE_KEY_ALIAS }}
+          ORG_GRADLE_PROJECT_releaseKeyPassword: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          export ORG_GRADLE_PROJECT_updateSigner="$UPDATE_SIGNER"
+          export ORG_GRADLE_PROJECT_versionCode="$VERSION_CODE"
+          export ORG_GRADLE_PROJECT_versionName="$VERSION_NAME"
+          export ORG_GRADLE_PROJECT_releaseKeystore="$RUNNER_TEMP/release.jks"
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          ./gradlew assembleRelease --console=plain --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/cleanyourtv-$VERSION_NAME.apk"
+
+      - name: Check the APK
+        run: |
+          apk="$RUNNER_TEMP/cleanyourtv-$VERSION_NAME.apk"
+          bt=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          certs=$("$bt/apksigner" verify --print-certs "$apk")
+          echo "$certs"
+          if grep -q '^Signer #2' <<<"$certs"; then echo "::error::more than one signer"; exit 1; fi
+          got=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$certs")
+          [ "$got" = "$UPDATE_SIGNER" ] || { echo "::error::APK signer $got is not the release key $UPDATE_SIGNER"; exit 1; }
+          badging=$("$bt/aapt2" dump badging "$apk" | head -n 1)
+          echo "$badging"
+          grep -q "name='com.gathin.tvhome' versionCode='$VERSION_CODE' versionName='$VERSION_NAME'" <<<"$badging" \
+            || { echo "::error::package name or version in the APK does not match the tag"; exit 1; }
+          min_sdk=$("$bt/aapt2" dump badging "$apk" | sed -n "s/^minSdkVersion:'\([0-9]*\)'.*/\1/p")
+          size=$(stat -c %s "$apk")
+          (( size <= 20 * 1024 * 1024 )) || { echo "::error::APK is larger than 20 MB"; exit 1; }
+          echo "MIN_SDK=$min_sdk" >> "$GITHUB_ENV"
+          echo "APK_SIZE=$size" >> "$GITHUB_ENV"
+          echo "APK_SHA256=$(sha256sum "$apk" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
+      - name: Release notes and update.json
+        run: |
+          # Notes come from the release if one was made in the web UI, else from the tag's message.
+          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+            gh release view "$TAG" -R "$REPO" --json body -q .body > "$RUNNER_TEMP/body.md"
+          else
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            git for-each-ref "refs/tags/$TAG" --format='%(contents)' | sed '/^-----BEGIN PGP SIGNATURE-----/,$d' > "$RUNNER_TEMP/body.md"
+          fi
+          # The feed's notes: first non-empty line, Markdown markers and control characters removed, 200 characters.
+          notes=$(grep -m 1 -v '^[[:space:]]*$' "$RUNNER_TEMP/body.md" | sed -E 's/^[#>*+ -]+//; s/[*_`]//g' \
+                  | tr -d '\000-\037\177' || true)
+          notes=${notes:0:200}
+          jq -n \
+            --arg vn "$VERSION_NAME" --argjson vc "$VERSION_CODE" --argjson min "$MIN_SDK" \
+            --arg url "https://github.com/$REPO/releases/download/$TAG/cleanyourtv-$VERSION_NAME.apk" \
+            --argjson size "$APK_SIZE" --arg sha "$APK_SHA256" --arg notes "$notes" \
+            '{schema: 1, package: "com.gathin.tvhome", version_code: $vc, version_name: $vn, min_sdk: $min,
+              apk_url: $url, apk_size: $size, apk_sha256: $sha}
+             + (if $notes == "" then {} else {notes: $notes} end)' > "$RUNNER_TEMP/update.json"
+          cat "$RUNNER_TEMP/update.json"
+          (( $(stat -c %s "$RUNNER_TEMP/update.json") <= 4096 )) || { echo "::error::update.json is larger than 4 KB"; exit 1; }
+          grep -q "$APK_SHA256" "$RUNNER_TEMP/body.md" \
+            || printf '\n\nAPK `cleanyourtv-%s.apk` SHA-256: `%s`\n' "$VERSION_NAME" "$APK_SHA256" >> "$RUNNER_TEMP/body.md"
+
+      - name: Publish
+        run: |
+          files=("$RUNNER_TEMP/cleanyourtv-$VERSION_NAME.apk" "$RUNNER_TEMP/update.json")
+          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" -R "$REPO" --clobber "${files[@]}"
+            gh release edit "$TAG" -R "$REPO" --notes-file "$RUNNER_TEMP/body.md"
+          else
+            gh release create "$TAG" -R "$REPO" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/body.md" "${files[@]}"
+          fi
+
+      - name: Remove the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"

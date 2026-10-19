@@ -628,6 +628,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         ambient.animate().alpha(0f).setDuration(reducedMotion ? 140 : 300).start();
     }
 
+    @Override
+    public void onReorderChanged(boolean moving) {
+        if (moving) hideGlass();
+    }
+
     private void hideGlass() {
         if (!glassShown) return;
         glassShown = false;

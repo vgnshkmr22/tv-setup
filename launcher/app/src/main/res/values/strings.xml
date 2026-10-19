@@ -46,4 +46,13 @@
     <string name="card_state_new">New</string>
     <string name="card_state_new_key">New key</string>
     <string name="card_state_new_label">New name</string>
+    <string name="dock_arrange">Rearrange dock</string>
+    <string name="dock_arrange_hint">Use Left and Right to move the app, OK when done</string>
+    <string name="dock_remove">Remove from dock</string>
+    <string name="dock_pin">Pin to dock</string>
+    <string name="dock_pin_replace">Pin to dock (replaces the last app)</string>
+    <string name="dock_reset">Reset dock to default</string>
+    <string name="dock_reset_confirm">Go back to the default dock? The order you chose will be lost.</string>
+    <string name="dock_reset_action">Reset</string>
+    <string name="app_info">App info</string>
 </resources>

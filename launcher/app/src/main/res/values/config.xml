@@ -54,9 +54,9 @@
          shrink to fit from 5 up (about 144dp at 5, 117dp at 6 on a 1080p TV). -->
     <integer name="columns">4</integer>
 
-    <!-- "Default home" tile that opens Android's home-screen picker, for TVs whose settings have one
-         (most Android TVs don't; the tile only appears when the page exists). Off by default. -->
-    <bool name="show_home_settings_shortcut">false</bool>
+    <!-- Basic motion is on; advanced effects are opt-in in the launcher's own Settings screen. -->
+    <bool name="animations">true</bool>
+    <bool name="advanced_effects">false</bool>
 
     <!-- Module cards: an app that declares a card (docs/specs/card.md) can stand in for its tile with its own
          label, caption and glow colour, once you answer Show on the prompt. false: never look for cards or ask. -->

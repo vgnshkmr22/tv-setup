@@ -3,6 +3,8 @@
 A theme is a folder with a `config.json` and, optionally, a `wallpaper.jpg`. Pushing one changes the
 launcher's dock, layout and look on the TV without rebuilding the APK: the launcher reads
 `config.json` as an overlay over its built-in `config.xml` the next time it starts.
+Choices made in the launcher's on-TV Settings screen (columns and effects) take priority over both;
+`tools/theme.sh --reset` does not erase those choices.
 
 ```bash
 TV_HOST=192.168.1.50 tools/theme.sh themes/aurora          # push a theme and restart Home
@@ -33,7 +35,8 @@ is ignored, and a file that doesn't parse is ignored as a whole, so a theme can 
 | `shamsi_date` | bool | Show the Solar Hijri date above the Gregorian one |
 | `module_cards` | bool | Look for module cards and ask about them (`true`); `false` turns the feature off |
 | `vpn_app` | string | App the network pill opens when a VPN is configured; also shows a red "VPN off" badge while no VPN is up |
-| `show_home_settings_shortcut` | bool | The "Default home" tile, where the TV has a home picker |
+| `animations` | bool | Basic focus, glass, title and tile entrance motion; true by default |
+| `advanced_effects` | bool | Optional lifted tile, icon zoom, smooth ambient colour and app opening effects; false by default |
 | `background_color` | `#RRGGBB` | Colour behind everything; black by default |
 | `wallpaper` | bool | Show `wallpaper.jpg` from the theme folder (`true`), or ignore it (`false`) |
 

@@ -30,6 +30,7 @@ final class Config {
     private static final String TAG = "TvHome.Config";
     static final String FILE_NAME = "config.json";
     static final String WALLPAPER_NAME = "wallpaper.jpg";
+    static final String SETTINGS_NAME = "launcher_settings";
 
     final List<String> dockApps;
     final List<String> hiddenApps;
@@ -39,11 +40,12 @@ final class Config {
     final String sourcePanelAction;
     final String inputAction;
     final int columns;
+    final boolean animations;
+    final boolean advancedEffects;
     final int rowsBelowDock;
     final boolean shamsiDate;
     final boolean moduleCards;
     final String vpnApp;
-    final boolean showHomeSettingsShortcut;
     /** Background colour behind everything, #RRGGBB; black unless a theme says otherwise. */
     final int backgroundColor;
     /** Full-screen picture behind the launcher, or null for the plain colour. */
@@ -53,8 +55,8 @@ final class Config {
 
     private Config(List<String> dockApps, List<String> hiddenApps, String liveTvPackage, String liveTvAction,
                    String sourcePanelService, String sourcePanelAction, String inputAction,
-                   int columns, int rowsBelowDock,
-                   boolean shamsiDate, boolean moduleCards, String vpnApp, boolean showHomeSettingsShortcut, int backgroundColor,
+                   int columns, int rowsBelowDock, boolean animations, boolean advancedEffects,
+                   boolean shamsiDate, boolean moduleCards, String vpnApp, int backgroundColor,
                    File wallpaper, boolean overlayApplied) {
         this.dockApps = Collections.unmodifiableList(dockApps);
         this.hiddenApps = Collections.unmodifiableList(hiddenApps);
@@ -65,10 +67,11 @@ final class Config {
         this.inputAction = inputAction;
         this.columns = columns;
         this.rowsBelowDock = rowsBelowDock;
+        this.animations = animations;
+        this.advancedEffects = advancedEffects;
         this.shamsiDate = shamsiDate;
         this.moduleCards = moduleCards;
         this.vpnApp = vpnApp;
-        this.showHomeSettingsShortcut = showHomeSettingsShortcut;
         this.backgroundColor = backgroundColor;
         this.wallpaper = wallpaper;
         this.overlayApplied = overlayApplied;
@@ -90,10 +93,11 @@ final class Config {
         String inputAction = res.getString(R.string.input_action).trim();
         int columns = res.getInteger(R.integer.columns);
         int rowsBelow = res.getInteger(R.integer.rows_below_dock);
+        boolean animations = res.getBoolean(R.bool.animations);
+        boolean advancedEffects = res.getBoolean(R.bool.advanced_effects);
         boolean shamsi = res.getBoolean(R.bool.shamsi_date);
         boolean moduleCards = res.getBoolean(R.bool.module_cards);
         String vpn = res.getString(R.string.vpn_app).trim();
-        boolean homeSettings = res.getBoolean(R.bool.show_home_settings_shortcut);
         int background = 0xFF000000;
         boolean applied = false;
 
@@ -111,19 +115,27 @@ final class Config {
             inputAction = string(json, "input_action", inputAction);
             columns = integer(json, "columns", columns, 1, 8);
             rowsBelow = integer(json, "rows_below_dock", rowsBelow, 0, 3);
+            animations = bool(json, "animations", animations);
+            advancedEffects = bool(json, "advanced_effects", advancedEffects);
             shamsi = bool(json, "shamsi_date", shamsi);
             moduleCards = bool(json, "module_cards", moduleCards);
             vpn = string(json, "vpn_app", vpn);
-            homeSettings = bool(json, "show_home_settings_shortcut", homeSettings);
             background = color(json, "background_color", background);
         }
+        // Choices made with the remote override the shipped configuration and a pushed theme.
+        android.content.SharedPreferences choices = ctx.getSharedPreferences(SETTINGS_NAME, Context.MODE_PRIVATE);
+        int chosenColumns = choices.getInt("columns", columns);
+        if (chosenColumns >= 4 && chosenColumns <= 7) columns = chosenColumns;
+        animations = choices.getBoolean("animations", animations);
+        advancedEffects = choices.getBoolean("advanced_effects", advancedEffects);
         File wallpaper = dir != null ? new File(dir, WALLPAPER_NAME) : null;
         if (wallpaper != null && !(wallpaper.isFile() && wallpaper.length() > 0)) wallpaper = null;
         // A theme can also switch the wallpaper off while the file is still there.
         if (json != null && json.has("wallpaper") && !bool(json, "wallpaper", true)) wallpaper = null;
 
         return new Config(dock, hidden, liveTv, liveTvAction, panelService, panelAction, inputAction,
-                Math.max(1, columns), Math.max(0, rowsBelow), shamsi, moduleCards, vpn, homeSettings, background,
+                Math.max(1, columns), Math.max(0, rowsBelow), animations, advancedEffects,
+                shamsi, moduleCards, vpn, background,
                 wallpaper, applied);
     }
 

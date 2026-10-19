@@ -22,6 +22,7 @@ project's own issue tracker.
 | [AirPlay receiver installer](https://github.com/nguyenduchoai/tv-vibehack/tree/feat/airplay-receiver) | A script that builds and installs an open-source AirPlay receiver next to the launcher, for iPhone mirroring | Xiaomi MiTV-AESP0, Android TV 9 | [nguyenduchoai](https://github.com/nguyenduchoai) |
 | [Sony China launcher](https://github.com/roninriddle/tv-vibehack/tree/sony) ([issues](https://github.com/roninriddle/tv-vibehack/issues)) | A Sony-focused fork with Simplified Chinese, remote app ordering, two visible app rows, focus/ambient animations and an on-TV stock-home recovery shortcut; no Google services required | Sony K-85XR70 (China), Android 14 | [roninriddle](https://github.com/roninriddle) |
 | [CleanMyTCL-Android9](https://github.com/eddysangalli/CleanMyTCL-Android9) | A fork specialised for TCL sets on Android TV 9: per-model profiles with a protected-package list, an ultralight launcher mode with on-TV settings and HDMI number keys, and published per-device benchmarks | TCL BeyondTV2, Realtek RTD2851, Android TV 9 | [eddysangalli](https://github.com/eddysangalli) |
+| [CleanXiaomiTV](https://github.com/majnioui/CleanXiaomiTV) | A fork for one Xiaomi set: a liquid-glass home over the photo of the day, a now playing card, weather and AdGuard DNS | Xiaomi MiTV-MOOR2, Google TV 11 | [majnioui](https://github.com/majnioui) |
 
 ## Add yours
 

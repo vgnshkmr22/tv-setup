@@ -1,9 +1,11 @@
 package com.gathin.tvhome;
 
+import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.Resources;
@@ -50,6 +52,10 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
 
         /** Called for a D-pad direction key on a tile. Return true when handled (focus stays put). */
         boolean onTileVerticalKey(int position, int keyCode);
+
+        /** Arranging the dock starts or ends: the focus highlight stays hidden while a tile is being moved. */
+        default void onReorderChanged(boolean moving) {
+        }
     }
 
     static final class Entry {
@@ -110,8 +116,15 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     private final Context ctx;
     private final TileListener listener;
     private final int dockSize;
-    /** Dock order (config.xml dock_apps, or a theme's config.json). */
+    /** Dock order: the owner's choice from the tile menu, else config.xml dock_apps or a theme's config.json. */
     private final List<String> favourites;
+    private final List<String> defaultDock;
+    private final SharedPreferences prefs;
+    private List<Cards.Card> lastCards = Collections.emptyList();
+    private RecyclerView recycler;
+    /** Package of the dock tile being dragged with Left/Right, or null when not arranging. */
+    private String movingPkg;
+    private static final String PREFS_DOCK = "dock", KEY_DOCK_ORDER = "order";
     /** Never shown as tiles (res/values/config.xml, hidden_apps). */
     private final Set<String> hidden;
     private final boolean showHomeSettings;
@@ -123,7 +136,14 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         this.ctx = ctx;
         this.listener = listener;
         this.dockSize = dockSize;
-        this.favourites = cfg.dockApps;
+        this.defaultDock = new ArrayList<>(cfg.dockApps);
+        this.prefs = ctx.getSharedPreferences(PREFS_DOCK, Context.MODE_PRIVATE);
+        this.favourites = new ArrayList<>(defaultDock);
+        String saved = prefs.getString(KEY_DOCK_ORDER, null);
+        if (saved != null) {
+            favourites.clear();
+            for (String pkg : saved.split(",")) if (!pkg.isEmpty()) favourites.add(pkg);
+        }
         this.hidden = new HashSet<>(cfg.hiddenApps);
         this.showHomeSettings = cfg.showHomeSettingsShortcut;
         this.reducedMotion = cfg.reducedMotion;
@@ -137,6 +157,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
      * so focus follows it); hidden_apps wins over a card, and a card's package in dock_apps takes that slot.
      */
     void reload(List<Cards.Card> cards) {
+        lastCards = cards;
         PackageManager pm = ctx.getPackageManager();
         Intent probe = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
         List<ResolveInfo> found = pm.queryIntentActivities(probe, 0);
@@ -217,7 +238,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         nameLp.width = w;
         nameLp.topMargin = h + Math.round(7 * density);
         name.setLayoutParams(nameLp);
-        return new Holder(v, listener, reducedMotion);
+        return new Holder(v, listener, reducedMotion, this);
     }
 
     @Override
@@ -244,14 +265,212 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         }
         h.card.setOnClickListener(v -> launch(e));
         h.card.setOnLongClickListener(v -> {
+            int pos = h.getBindingAdapterPosition();
+            if (pos == RecyclerView.NO_POSITION) return true;
+            showTileMenu(e, pos);
+            return true;
+        });
+    }
+
+    /** Packages of the tiles currently in the dock row, left to right. */
+    private List<String> visibleDock() {
+        List<String> dock = new ArrayList<>();
+        for (int i = 0; i < Math.min(dockSize, items.size()); i++) {
+            String pkg = items.get(i).pkg;
+            if (favourites.contains(pkg) && !dock.contains(pkg)) dock.add(pkg);
+        }
+        return dock;
+    }
+
+    @Override
+    public void onAttachedToRecyclerView(@NonNull RecyclerView rv) {
+        recycler = rv;
+    }
+
+    /**
+     * Puts focus on the tile of this package once the reloaded list has settled, then re-places the glass
+     * highlight: it was positioned while the tiles were still sliding, so it would otherwise stay behind.
+     */
+    private void focusPackage(String pkg) {
+        if (recycler == null) return;
+        recycler.postDelayed(() -> {
+            RecyclerView.ViewHolder vh = holderFor(pkg);
+            if (vh instanceof Holder) ((Holder) vh).card.requestFocus();
+        }, 150);
+        syncGlass(pkg, 450);
+    }
+
+    private int indexOfPkg(String pkg) {
+        for (int i = 0; i < items.size(); i++) if (items.get(i).pkg.equals(pkg)) return i;
+        return -1;
+    }
+
+    private RecyclerView.ViewHolder holderFor(String pkg) {
+        int i = indexOfPkg(pkg);
+        return i < 0 || recycler == null ? null : recycler.findViewHolderForAdapterPosition(i);
+    }
+
+    /** Re-reports the focused tile to the listener after the tiles have stopped moving. */
+    private void syncGlass(String pkg, long delayMs) {
+        if (recycler == null) return;
+        recycler.postDelayed(() -> {
+            RecyclerView.ViewHolder vh = holderFor(pkg);
+            if (vh instanceof Holder && ((Holder) vh).card.isFocused()) {
+                listener.onTileFocused(indexOfPkg(pkg), ((Holder) vh).card);
+            }
+        }, delayMs);
+    }
+
+    /**
+     * Re-places the glass once the current layout is final, before the next frame is drawn.
+     */
+    private void syncGlassNextFrame(String pkg) {
+        if (recycler == null) return;
+        recycler.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+            @Override
+            public boolean onPreDraw() {
+                recycler.getViewTreeObserver().removeOnPreDrawListener(this);
+                RecyclerView.ViewHolder vh = holderFor(pkg);
+                if (vh instanceof Holder && ((Holder) vh).card.isFocused()) {
+                    listener.onTileFocused(indexOfPkg(pkg), ((Holder) vh).card);
+                }
+                return true;
+            }
+        });
+    }
+
+    // ---- arrange mode: Left/Right drag the focused dock tile, OK or Back drops it ------------------
+
+    private void beginReorder(Entry e) {
+        movingPkg = e.pkg;
+        listener.onReorderChanged(true);
+        RecyclerView.ViewHolder vh = holderFor(e.pkg);
+        if (vh instanceof Holder) ((Holder) vh).card.animate().scaleX(1.22f).scaleY(1.22f).setDuration(160).start();
+        Toast.makeText(ctx, R.string.dock_arrange_hint, Toast.LENGTH_LONG).show();
+    }
+
+    private void endReorder() {
+        String pkg = movingPkg;
+        movingPkg = null;
+        listener.onReorderChanged(false);
+        RecyclerView.ViewHolder vh = pkg == null ? null : holderFor(pkg);
+        if (vh instanceof Holder) {
+            ((Holder) vh).card.animate().scaleX(FOCUS_SCALE).scaleY(FOCUS_SCALE).setDuration(160).start();
+            syncGlassNextFrame(pkg);   // dropped: the highlight appears at the tile's final slot
+        }
+    }
+
+    /** Consumes keys on a tile while arranging; false when not arranging (or another tile has focus). */
+    boolean onReorderKey(int position, KeyEvent ev) {
+        if (movingPkg == null) return false;
+        if (position < 0 || position >= items.size() || !items.get(position).pkg.equals(movingPkg)) {
+            movingPkg = null;   // focus left the tile being moved: stop arranging
+            return false;
+        }
+        boolean down = ev.getAction() == KeyEvent.ACTION_DOWN;
+        switch (ev.getKeyCode()) {
+            case KeyEvent.KEYCODE_DPAD_LEFT:
+                if (down) moveDockTile(position, -1);
+                return true;
+            case KeyEvent.KEYCODE_DPAD_RIGHT:
+                if (down) moveDockTile(position, 1);
+                return true;
+            case KeyEvent.KEYCODE_DPAD_UP:
+            case KeyEvent.KEYCODE_DPAD_DOWN:
+                return true;
+            case KeyEvent.KEYCODE_DPAD_CENTER:
+            case KeyEvent.KEYCODE_ENTER:
+            case KeyEvent.KEYCODE_BACK:
+                if (!down) endReorder();   // act on key-up so the click never reaches the tile
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void moveDockTile(int position, int step) {
+        int target = position + step;
+        if (target < 0 || target >= visibleDock().size()) return;
+        Entry moved = items.get(position);
+        Entry other = items.get(target);
+        int a = favourites.indexOf(moved.pkg), b = favourites.indexOf(other.pkg);
+        if (a < 0 || b < 0) return;
+        Collections.swap(favourites, a, b);
+        Collections.swap(items, position, target);
+        prefs.edit().putString(KEY_DOCK_ORDER, join(favourites)).apply();
+        notifyItemMoved(position, target);   // the moved view keeps focus and slides with it
+    }
+
+    private void saveDock(List<String> dock, String focusPkg) {
+        favourites.clear();
+        favourites.addAll(dock);
+        prefs.edit().putString(KEY_DOCK_ORDER, join(dock)).apply();
+        reload(lastCards);
+        focusPackage(focusPkg);
+    }
+
+    private static String join(List<String> parts) {
+        StringBuilder sb = new StringBuilder();
+        for (String p : parts) sb.append(sb.length() == 0 ? "" : ",").append(p);
+        return sb.toString();
+    }
+
+    /** Asks before throwing the owner's dock order away; Cancel has the focus, so a stray OK keeps it. */
+    private void confirmReset(Entry e) {
+        AlertDialog d = new AlertDialog.Builder(ctx)
+                .setTitle(R.string.dock_reset)
+                .setMessage(R.string.dock_reset_confirm)
+                .setPositiveButton(R.string.dock_reset_action, (dlg, which) -> resetDock(e.pkg))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+        d.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus();
+    }
+
+    private void resetDock(String focusPkg) {
+        prefs.edit().remove(KEY_DOCK_ORDER).apply();
+        favourites.clear();
+        favourites.addAll(defaultDock);
+        reload(lastCards);
+        focusPackage(focusPkg);
+    }
+
+    /** Long-press menu: arrange the dock from the remote, or open the app's system details. */
+    private void showTileMenu(Entry e, int position) {
+        if (e.kind == Entry.HOME_SETTINGS) return;
+        List<String> dock = visibleDock();
+        int at = dock.indexOf(e.pkg);
+        List<String> labels = new ArrayList<>();
+        List<Runnable> actions = new ArrayList<>();
+        if (at >= 0 && position < dockSize) {
+            if (dock.size() > 1) {
+                labels.add(ctx.getString(R.string.dock_arrange));
+                actions.add(() -> beginReorder(e));
+            }
+            labels.add(ctx.getString(R.string.dock_remove));
+            actions.add(() -> { dock.remove(at); saveDock(dock, dock.isEmpty() ? e.pkg : dock.get(Math.min(at, dock.size() - 1))); });
+        } else {
+            labels.add(ctx.getString(dock.size() >= dockSize ? R.string.dock_pin_replace : R.string.dock_pin));
+            actions.add(() -> {
+                if (dock.size() >= dockSize) dock.remove(dock.size() - 1);
+                dock.add(e.pkg);
+                saveDock(dock, e.pkg);
+            });
+        }
+        labels.add(ctx.getString(R.string.dock_reset));
+        actions.add(() -> confirmReset(e));
+        labels.add(ctx.getString(R.string.app_info));
+        actions.add(() -> {
             Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + e.pkg));
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             try {
                 ctx.startActivity(i);
             } catch (ActivityNotFoundException ignored) {
             }
-            return true;
         });
+        new AlertDialog.Builder(ctx)
+                .setTitle(e.label)
+                .setItems(labels.toArray(new String[0]), (d, which) -> actions.get(which).run())
+                .show();
     }
 
     /** Opens the tile's activity by explicit component, with no extras: a card can name nothing else. */
@@ -363,7 +582,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         final TextView name;
         final boolean reducedMotion;
 
-        Holder(View v, TileListener listener, boolean reducedMotion) {
+        Holder(View v, TileListener listener, boolean reducedMotion, AppAdapter owner) {
             super(v);
             card = v.findViewById(R.id.card);
             banner = v.findViewById(R.id.banner);
@@ -383,6 +602,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
             card.setClipToOutline(true);
 
             card.setOnKeyListener((view, keyCode, event) -> {
+                if (owner.onReorderKey(getBindingAdapterPosition(), event)) return true;
                 if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
                 if (keyCode != KeyEvent.KEYCODE_DPAD_UP && keyCode != KeyEvent.KEYCODE_DPAD_DOWN
                         && keyCode != KeyEvent.KEYCODE_DPAD_LEFT && keyCode != KeyEvent.KEYCODE_DPAD_RIGHT) return false;

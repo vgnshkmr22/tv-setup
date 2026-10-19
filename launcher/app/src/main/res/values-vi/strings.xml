@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dock_arrange">Sắp xếp dock</string>
+    <string name="dock_arrange_hint">Dùng phím Trái/Phải để di chuyển app, bấm OK để xong</string>
+    <string name="dock_remove">Bỏ khỏi dock</string>
+    <string name="dock_pin">Ghim vào dock</string>
+    <string name="dock_pin_replace">Ghim vào dock (thay app cuối)</string>
+    <string name="dock_reset">Khôi phục dock mặc định</string>
+    <string name="dock_reset_confirm">Quay về dock mặc định? Thứ tự bạn đã chọn sẽ mất.</string>
+    <string name="dock_reset_action">Khôi phục</string>
+    <string name="app_info">Thông tin ứng dụng</string>
+</resources>

@@ -79,6 +79,10 @@ Launcher
 - Make D-pad navigation deterministic: Up/Down move exactly one row, Up from the dock goes to the top
   bar, the ends of the top bar don't fall through to tiles. Remember the last focused tile.
 - Keep it light: the TV has about 1 GB of RAM. No blur, no video, no network polling.
+- If you are using this repo's launcher, ask me how it should update: built here and updated by running
+  `launcher/build-and-install.sh` again, or the official release (`CHANNEL=official`), which updates
+  itself on the TV. For the official release, ask whether it should check weekly, only when I ask, or
+  never (`self_update`: `weekly`, `manual`, `off`), and set that in a theme overlay.
 
 Verify
 - After each change, inject remote key presses over ADB, take a screenshot from the TV and look at it.
@@ -89,4 +93,4 @@ Verify
 ---
 
 Expect to answer three or four checklist questions (which apps you use, which four go in the dock,
-whether to keep the voice assistant, Chromecast and firmware updates). Everything is reversible.
+whether to keep the voice assistant, Chromecast and firmware updates, and how the launcher updates). Everything is reversible.

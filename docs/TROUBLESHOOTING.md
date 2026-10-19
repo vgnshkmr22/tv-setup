@@ -85,3 +85,32 @@ Things that bit us or contributors, so they don't bite you. Commands use `tools/
   package that also claims HOME (PatchWall on Xiaomi) makes Android drop the default. The install
   script now picks the known stock launcher among the candidates by itself; otherwise choose one on
   the TV or pass `STOCK_LAUNCHER=<package>`.
+
+## Updates
+
+These apply to the official release, which updates itself
+([`docs/specs/self-update.md`](specs/self-update.md)). The launcher logs every update step under the
+tag `TvHomeUpdate`: `tools/tv.py 'logcat -d -s TvHomeUpdate'`.
+
+- **"Built on a computer: update with build-and-install.sh"** in Check for updates: this launcher
+  was built from source, so it has no update feed. Run the script again, or switch to the official
+  release with `CHANNEL=official MIGRATE=1 launcher/build-and-install.sh`.
+- **`INSTALL_FAILED_UPDATE_INCOMPATIBLE`** from the install script: the launcher on the TV is signed
+  with a different key (yours, or the release key). Android only replaces it through an uninstall;
+  run again with `MIGRATE=1`, which saves your settings first.
+- **"Couldn't reach the update server"**: the TV has no internet, or GitHub is unreachable from its
+  network (a Pi-hole or firewall blocking `github.com` or `*.githubusercontent.com`). The weekly
+  check tries again a day later.
+- **The update asks for "Install unknown apps" and the TV has no such screen**, common on Android TV.
+  Grant it once from a computer; the install script already does this:
+  `tools/tv.py 'appops set com.gathin.tvhome REQUEST_INSTALL_PACKAGES allow'`.
+- **"The update didn't pass its checks and was not installed"**: the download didn't match the
+  SHA-256 or the signing key in the release's `update.json`. Usually a download cut short by a
+  proxy or captive portal; try again later. If it keeps happening, open an issue with the
+  `TvHomeUpdate` log lines.
+- **`INSTALL_FAILED_VERIFICATION_FAILURE`** when updating: the TV refuses every sideloaded install
+  (some China-market TCL sets). Updates can't work there; the launcher stays on its version.
+- **Accessibility services off after an update** (Input button, Home key on Xiaomi remotes): the
+  launcher turns them back on itself when the install script granted it `WRITE_SECURE_SETTINGS`. If
+  it was installed before that grant existed, run the install script once more with
+  `INPUT_KEY_SERVICE=1` / `HOME_KEY_SERVICE=1` as before.

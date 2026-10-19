@@ -61,4 +61,15 @@
     <!-- Module cards: an app that declares a card (docs/specs/card.md) can stand in for its tile with its own
          label, caption and glow colour, once you answer Show on the prompt. false: never look for cards or ask. -->
     <bool name="module_cards">true</bool>
+
+    <!-- Self-update (docs/specs/self-update.md), official builds only: weekly = check once a week and ask
+         before installing; manual = only when you choose "Check for updates" (hold OK on Settings);
+         off = never contact the update server. A launcher built on your computer has no update feed
+         and ignores this. -->
+    <string name="self_update" translatable="false">weekly</string>
+
+    <!-- Bitcoin price, 24 hour change and block height above the top buttons, refreshed every five minutes
+         while Home is in front (api.coinbase.com, api.exchange.coinbase.com, mempool.space). Off by default;
+         also switched on the TV: hold OK on Settings, then Bitcoin price. -->
+    <bool name="btc_ticker">false</bool>
 </resources>

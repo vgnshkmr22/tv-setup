@@ -31,6 +31,8 @@ is ignored, and a file that doesn't parse is ignored as a whole, so a theme can 
 | `columns` | 1 to 8 | Tiles per row; tiles shrink to fit from 5 up |
 | `rows_below_dock` | 0 to 3 | Grid rows left visible under the dock |
 | `shamsi_date` | bool | Show the Solar Hijri date above the Gregorian one |
+| `btc_ticker` | bool | Bitcoin price, 24 hour change and block height above the top buttons, refreshed every five minutes while Home is in front (`false` by default). Hold OK on Settings → Bitcoin price switches it on the TV, and that choice then wins over this key |
+| `self_update` | `off`, `manual`, `weekly` | Official release only: check for a new launcher once a week (`weekly`, the default), only from Settings → Check for updates (`manual`), or never contact the update server (`off`). See [`docs/specs/self-update.md`](../docs/specs/self-update.md) |
 | `module_cards` | bool | Look for module cards and ask about them (`true`); `false` turns the feature off |
 | `vpn_app` | string | App the network pill opens when a VPN is configured; also shows a red "VPN off" badge while no VPN is up |
 | `show_home_settings_shortcut` | bool | The "Default home" tile, where the TV has a home picker |

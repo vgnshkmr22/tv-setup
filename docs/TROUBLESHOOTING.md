@@ -16,6 +16,9 @@ Things that bit us or contributors, so they don't bite you. Commands use `tools/
 - **USB devices go dead while USB debugging is on**, seen on the Xiaomi Mi Box S: its firmware
   switches the USB port to ADB device mode, which cuts the power to a USB speaker or drive. Switch
   USB debugging off when you're done; the launcher doesn't need it.
+- **Close port 5555 when you're done.** It is plaintext, and on firmware with `ro.adb.secure=0` any
+  device on the LAN gets a shell. Turn USB debugging and Network/ADB debugging off on the TV, revoke
+  the USB debugging authorisations, reboot, then confirm `nc -vz <tv ip> 5555` fails.
 - **Windows PowerShell 5.1 adds a byte-order mark** to text piped into a program, which turned the
   first batch command into gibberish. `tv.py` now strips it, and the `.ps1` scripts pipe clean UTF-8.
 - **"Allow USB debugging?" comes back** although `adb devices` already works: `tv.py` used its own

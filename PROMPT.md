@@ -32,6 +32,10 @@ Back up first
   before changing anything, and write a restore script that re-enables everything you disable.
 - Ask me what is plugged into the TV's USB ports. Some devices cut their power while USB debugging
   is on, so warn me, and remind me to switch debugging off once you're done.
+- When you finish, close network ADB instead of leaving it open: switch USB debugging and
+  Network/ADB debugging off on the TV, revoke the USB debugging authorisations, reboot, and check
+  that `nc -vz <tv ip> 5555` fails. Port 5555 is plaintext, and on firmware with `ro.adb.secure=0`
+  any device on the LAN can get a shell.
 
 Debloat
 - List installed packages and sort them into: manufacturer telemetry/analytics, manufacturer content

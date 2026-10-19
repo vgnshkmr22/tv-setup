@@ -259,7 +259,14 @@ you re-enable it. If one lands, the worst case is a package coming back and you 
 The launcher just lists what is installed and launches it with intents that have been stable for a decade.
 
 **Isn't ADB access a security hole?** It is one explicit "allow this computer" tap on the TV, the
-same as developing an Android app. Switch USB debugging off afterwards; the launcher keeps working.
+same as developing an Android app. Network ADB is plaintext on port 5555, and on firmware with
+`ro.adb.secure=0` any device on the LAN gets a shell, so close it when you are done:
+
+1. On the TV: Developer options → turn **USB debugging** and **Network/ADB debugging** off, and
+   revoke the USB debugging authorisations.
+2. Reboot the TV, then confirm the port is gone from your computer: `nc -vz <tv ip> 5555` must fail.
+
+The launcher keeps working without debugging.
 
 **Can it block ads inside apps too?** Partly, with Android's Private DNS (Android 9 and newer). Point
 it at an ad-blocking resolver such as [AdGuard DNS](https://adguard-dns.io) and every app's ad and

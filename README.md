@@ -57,6 +57,9 @@ You need a computer on the same Wi-Fi as the TV and a coding assistant with shel
 The assistant backs up, debloats, builds and installs the launcher, and checks each step with
 screenshots pulled from the TV. With this repo as context it takes about fifteen minutes.
 
+Rather not build? `CHANNEL=official` installs the signed release APK instead, and that one
+[updates itself](#updates) on the TV, so you need the computer only once.
+
 ## What you get
 
 - **A pitch-black home** with a dock of your four favourite apps in a rounded band, where Apple TV puts it.
@@ -65,6 +68,8 @@ screenshots pulled from the TV. With this repo as context it takes about fifteen
 - **One floating glass highlight** that springs from tile to tile. The focused tile lifts and shows its name.
 - **Three frosted buttons**: Inputs (HDMI ports, AV, Live TV), Wi-Fi or Ethernet with the network name, Settings.
 - **A greeting, a thin clock and the date** in [Outfit](https://fonts.google.com/specimen/Outfit), and a matching Clock screensaver.
+- **Now playing**: a card above the dock for music playing in the background, with play/pause and skip on the remote.
+- **Gallery**, off by default: your own photos from `Pictures/Launcher` on the TV as the background, a random one every five minutes.
 - **Themes** that change colours, wallpaper, dock and columns without a rebuild, and **module cards** that let other apps plug a tile in, only with your say-so.
 
 And a TV that stops working against you: no sponsored rows, no "Discover" nags, no analytics
@@ -136,6 +141,7 @@ tools/venv/bin/python -I tools/tv.py 'pm list packages'      # one shell command
 tools/disable.sh examples/xiaomi-mi-tv-4a/debloat.txt        # apply a debloat list
 tools/restore.sh examples/xiaomi-mi-tv-4a/debloat.txt        # undo it, stock launcher back
 TV_HOST=192.168.1.50 launcher/build-and-install.sh           # build the launcher and make it Home
+CHANNEL=official TV_HOST=192.168.1.50 launcher/build-and-install.sh   # or install the release APK
 tools/theme.sh themes/aurora                                 # push a theme; --reset removes it
 ```
 
@@ -145,7 +151,7 @@ tools/theme.sh themes/aurora                                 # push a theme; --r
 | [`tools/b64push.py`](tools/b64push.py) | Uploads large files such as APKs in base64 chunks and verifies the checksum. |
 | [`tools/disable.sh`](tools/disable.sh), [`restore.sh`](tools/restore.sh) | Apply or undo a debloat list. |
 | [`tools/theme.sh`](tools/theme.sh) | Push a folder from [`themes/`](themes/) to the launcher and restart Home. |
-| [`launcher/build-and-install.sh`](launcher/build-and-install.sh) | Builds a shrunk release (about 250 KB), installs it, switches Home, and rolls back if Home does not land on it. |
+| [`launcher/build-and-install.sh`](launcher/build-and-install.sh) | Builds a shrunk release (about 250 KB), or downloads the official one with `CHANNEL=official`, installs it, switches Home, and rolls back if Home does not land on it. |
 
 Every script has a PowerShell twin next to it. On Windows with Android Studio installed nothing
 else is needed:
@@ -164,17 +170,41 @@ The install scripts ask the TV which launcher owns Home and only disable one the
 
 A small native Android TV app (`com.gathin.tvhome`, about 250 KB installed) in plain Java with
 AndroidX RecyclerView and nothing heavier. Built for sets with 1 GB of RAM: no blur, no video, no
-network, no background services. It needs JDK 17 and Android SDK platform 34 to build; on macOS,
+background services, and no network apart from the weekly update check of the official release and the Bitcoin line, if you switch it on. It needs JDK 17 and Android SDK platform 34 to build; on macOS,
 `brew install openjdk@17 android-commandlinetools` and `sdkmanager "platforms;android-34" "build-tools;34.0.0"`.
 
 - **Configure** in [`config.xml`](launcher/app/src/main/res/values/config.xml): dock order, hidden apps, the Live TV package, columns (tiles shrink from 5 up), rows under the dock, an optional VPN app for the network pill.
 - **Themes** set the same keys plus a background colour and a wallpaper from a `config.json` pushed to the TV, no rebuild. Three ship in [`themes/`](themes/), documented there.
 - **Language** follows the TV: English, German, Spanish, Catalan, French, Russian, Simplified Chinese, Thai. Android 13+ can set it for the launcher alone: `tools/tv.py 'cmd locale set-app-locales com.gathin.tvhome --locales ca'`.
 - **Module cards** let any TV app declare its own tile (label, caption, glow). The launcher asks you once per app, Keep hidden by default, and remembers the answer for that app's signing key and card name. Hold OK on Settings to change your mind. How to make one: [`docs/modules.md`](docs/modules.md); the contract: [`docs/specs/card.md`](docs/specs/card.md).
+- **Updates**: see [below](#updates).
 - **Clock screensaver**: a drifting clock over the glow, so nothing burns in. Pick "Clock" in the TV's screensaver settings, or over ADB:
   `tools/tv.py 'settings put secure screensaver_components com.gathin.tvhome/.ClockDream; settings put secure screensaver_enabled 1'`
 - **Remote keys**: an optional accessibility service keeps the remote's Input button working on Google TV (`INPUT_KEY_SERVICE=1` at install), another fixes sticks whose Home key sends ALL_APPS (`HOME_KEY_SERVICE=1`).
 - **Navigation** is deliberate: Up and Down move one row, the top buttons never fall through to tiles, the last focused app is remembered, and installing or removing an app refreshes the tiles while Home is open.
+
+## Updates
+
+There are two ways to get the launcher, and they update differently.
+
+- **Built on your computer** (the default): signed with your computer's own key, carrying your
+  `config.xml` and any code you changed. To update, `git pull` and run `build-and-install.sh`
+  again. It never touches the network.
+- **Official release** (`CHANNEL=official`, `-Channel official` on Windows): the APK from the
+  [Releases page](https://github.com/Gathin23/cleanyourtv/releases), signed with the project's
+  release key. It checks for a new version once a week while Home is on screen and asks before
+  installing anything: Later, Update or Skip this version. Hold OK on Settings → Check for updates
+  to look right away. Set `self_update` to `manual` or `off` in a [theme](themes/) to change that.
+
+Updates are checked three times before they install: the file's SHA-256 against the release's
+`update.json`, its signing key against the launcher's, and Android's own rule that an update must
+carry the installed app's key. The request to GitHub carries the version number and nothing else.
+The details are in [`docs/specs/self-update.md`](docs/specs/self-update.md).
+
+Moving a TV from a launcher you built to the official one changes the signing key, which Android
+only allows through an uninstall. `CHANNEL=official MIGRATE=1 launcher/build-and-install.sh` saves
+your settings as a theme overlay, asks, swaps the launcher, and puts them back. Your answers to
+module card prompts are not kept; the TV asks again.
 
 ## Restoring your TV
 
@@ -217,12 +247,16 @@ The launcher just lists what is installed and launches it with intents that have
 **Isn't ADB access a security hole?** It is one explicit "allow this computer" tap on the TV, the
 same as developing an Android app. Switch USB debugging off afterwards; the launcher keeps working.
 
+**Do I need ADB again for updates?** Not with the official release: it updates itself on the TV
+([Updates](#updates)). A launcher you built yourself is updated by building it again, over ADB.
+
 **AirPlay?** Not from this repo. Chromecast built-in stays for Android phones. For iPhones,
 [jqssun/android-airplay-server](https://github.com/jqssun/android-airplay-server) works; an install
 script for it is in [PR #84](https://github.com/Gathin23/cleanyourtv/pull/84).
 
-**Can I just download the APK?** Build it with the one-line script; it takes a minute and you
-control what goes on your TV. No prebuilt binaries.
+**Can I just download the APK?** Yes, from the [Releases page](https://github.com/Gathin23/cleanyourtv/releases),
+with its SHA-256 in the release notes; `CHANNEL=official` downloads and checks it for you. Building
+it yourself takes a minute and lets you change the code.
 
 ## Contributing
 

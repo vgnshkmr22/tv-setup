@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -10,6 +11,17 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- Needed on Android 10 to read the Wi-Fi network name; granted over adb at install time. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Network: the updater (docs/specs/self-update.md) and, only when switched on, the Bitcoin line
+         (Ticker). The install permission is removed again from builds without a feed (src/noFeed). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Gallery: read the owner's photos in Pictures/Launcher. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Never asked for: only `pm grant` over adb gives it. Puts the launcher's accessibility services
+         back on after a self-update, if Android switched them off. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
 
     <!-- Android 11+ package visibility: lets the launcher list the TV apps it shows as tiles, and the
          apps that declare a module card (docs/specs/card.md). -->
@@ -87,6 +99,12 @@
             </intent-filter>
         </service>
 
+        <!-- Result of a self-update install session (Updater.install). Only the package installer's
+             PendingIntent reaches it. -->
+        <receiver
+            android:name=".InstallReceiver"
+            android:exported="false" />
+
         <!-- The remote's Input button (KEYCODE_TV) opens the input switcher; see InputKeyService. -->
         <service
             android:name=".InputKeyService"
@@ -99,6 +117,19 @@
             <meta-data
                 android:name="android.accessibilityservice"
                 android:resource="@xml/input_key_service" />
+        </service>
+
+        <!-- Now playing card: Android lists other apps' media sessions only to an enabled notification
+             listener. It ignores notifications; the install script enables it with
+             `cmd notification allow_listener`. -->
+        <service
+            android:name=".NowPlayingListener"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
         </service>
     </application>
 </manifest>

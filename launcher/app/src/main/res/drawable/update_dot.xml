@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- On the Settings pill while an update is waiting (self-update). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="#FF34C759" />
+    <size android:width="7dp" android:height="7dp" />
+</shape>

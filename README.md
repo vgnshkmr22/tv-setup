@@ -156,6 +156,7 @@ tools/restore.sh examples/xiaomi-mi-tv-4a/debloat.txt        # undo it and resto
 | [`tools/tv.py`](tools/tv.py) | A pure-Python ADB client: shell, batch, push, pull. Works where the stock `adb` binary is blocked. |
 | [`tools/b64push.py`](tools/b64push.py) | Uploads larger files such as APKs as base64 chunks and verifies the checksum. |
 | [`tools/disable.sh`](tools/disable.sh) / [`tools/restore.sh`](tools/restore.sh) | Apply or undo a debloat list. PowerShell versions sit next to them. |
+| [`tools/session-install.sh`](tools/session-install.sh) | Installs an APK through a PackageInstaller session, for firmware that patches `pm install` to refuse shell installs (TCL). |
 
 ### Windows
 

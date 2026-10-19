@@ -9,6 +9,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.ChangedPackages;
+import android.content.pm.ResolveInfo;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
@@ -29,6 +31,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.text.SpannableString;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
 import android.text.Spanned;
 import android.text.TextPaint;
 import android.text.TextUtils;
@@ -62,6 +67,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * tvOS style home: black, a pinned dock row, an app grid, and one glass highlight that springs between tiles.
@@ -111,11 +117,40 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private List<Cards.Card> cards = Collections.emptyList();
     /** The grid has been laid out and focused since the last resume; the card prompt waits for this. */
     private boolean tilesReady;
+    /** Between onResume and onPause; package broadcasts while paused only mark the tiles stale. */
+    private boolean resumed;
+    /**
+     * The tiles no longer match the TV: never built, a package changed while Home was away, or the
+     * drawables were dropped under memory pressure. Otherwise a return to Home keeps the tiles as they are.
+     */
+    private boolean tilesStale = true;
+    /** The grid's entry animation has played; it plays once per build from scratch, not on every return. */
+    private boolean tilesShown;
+    /** PackageManager's change counter at the last check (getChangedPackages). */
+    private int packageSeq;
+    private int backgroundColor;
+    private File wallpaperFile;
+    private android.widget.ImageView wallView;
     private Dialog cardPrompt;
     /** Set when a decision could not be saved: no more prompts until the next resume, instead of asking in a loop. */
     private boolean promptsPaused;
-    /** The Inputs or Module cards dropdown while one is open, so onPause can close it. */
+    /** The Inputs, Settings or Module cards dropdown while one is open, so onPause can close it. */
     private PopupWindow openPopup;
+    private TextView btnSettings;
+    /** self_update (config.xml or a theme's config.json): off, manual or weekly. */
+    private String selfUpdate;
+    private Dialog updatePrompt;
+    // Static so they survive the activity being recreated: the newer version the last check found,
+    // and whether the owner still has to be asked about it in this process.
+    private static Updater.Feed offered;
+    private static boolean updatePromptDue;
+    /** Bitcoin line (Ticker): on from btc_ticker, or from the Settings menu, which wins once used. */
+    private TextView btcTicker;
+    private boolean btcOn;
+    /** greeting_name: said after the greeting, which is shown in capitals. */
+    private String greetingName = "";
+    private static final String PREFS = "home";
+    private static final String PREF_BTC = "btc_ticker";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     /** Refreshes the network pill when the connection changes: at boot Wi-Fi often connects after Home is shown. */
@@ -161,7 +196,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             // Updates send REMOVED followed by ADDED; keep the tile until the new APK is ready.
             if (Intent.ACTION_PACKAGE_REMOVED.equals(intent.getAction())
                     && intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) return;
-            reloadApps(false);
+            if (!resumed) {
+                tilesStale = true;   // rebuilt when Home comes back
+                return;
+            }
+            reloadApps(false, true);
+        }
+    };
+    private final Runnable btcTick = new Runnable() {
+        @Override
+        public void run() {
+            fetchTicker();
+            handler.postDelayed(this, Ticker.REFRESH_MS);
         }
     };
     private final Runnable minuteTick = new Runnable() {
@@ -177,6 +223,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        // The root (or the wallpaper) paints every pixel; a window background under it is a wasted full-screen fill.
+        getWindow().setBackgroundDrawable(null);
         density = getResources().getDisplayMetrics().density;
         // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
         Config cfg = Config.load(this);
@@ -188,8 +236,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         sourcePanelAction = cfg.sourcePanelAction;
 
         root = findViewById(R.id.root);
-        root.setBackgroundColor(cfg.backgroundColor);
-        if (cfg.wallpaper != null) showWallpaper(cfg.wallpaper);
+        backgroundColor = cfg.backgroundColor;
+        root.setBackgroundColor(backgroundColor);
+        wallpaperFile = cfg.wallpaper;
+        if (wallpaperFile != null) showWallpaper(wallpaperFile);
         glass = findViewById(R.id.glass);
         ambient = findViewById(R.id.ambient);
         heroName = findViewById(R.id.heroName);
@@ -268,7 +318,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
 
         btnInputs = findViewById(R.id.btnInputs);
-        View btnSettings = findViewById(R.id.btnSettings);
+        btnSettings = findViewById(R.id.btnSettings);
         btnInputs.setOnClickListener(v -> showInputs());
         btnWifi.setOnClickListener(v -> openNetworkPill());
         btnWifi.setOnLongClickListener(v -> {
@@ -277,10 +327,19 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         });
         btnSettings.setOnClickListener(v -> open(new Intent(Settings.ACTION_SETTINGS)));
         btnSettings.setOnLongClickListener(v -> {
-            if (!moduleCards) return false;   // off: a long press does nothing, as before the feature
-            showModuleCards();
+            showSettingsMenu();
             return true;
         });
+        selfUpdate = cfg.selfUpdate;
+        greetingName = cfg.greetingName;
+        btcTicker = findViewById(R.id.btcTicker);
+        btcOn = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_BTC, cfg.btcTicker);
+        // The first start after a self-update says so (and puts accessibility services back if it can).
+        int started = UpdateFeature.run(() -> Updater.afterStart(this), Updater.STARTED_PLAIN);
+        if (started != Updater.STARTED_PLAIN) {
+            Toast.makeText(this, getString(started == Updater.STARTED_UPDATED ? R.string.updated_to : R.string.updated_services_off,
+                    BuildConfig.VERSION_NAME), Toast.LENGTH_LONG).show();
+        }
 
         // Keep focus on the top bar at its ends and at the top: Android's focus finder would otherwise
         // jump to a tile far below when there is nothing in that direction.
@@ -308,6 +367,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         packageFilter.addAction(Intent.ACTION_PACKAGE_REMOVED);
         packageFilter.addAction(Intent.ACTION_PACKAGE_CHANGED);
         packageFilter.addDataScheme("package");
+        // Registered for the activity's life, not just while resumed: a package that changes while
+        // another app is in front marks the tiles stale, so returning Home rebuilds only when needed.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(packageReceiver, packageFilter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(packageReceiver, packageFilter);
+        }
 
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
@@ -342,6 +408,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             wall.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
             wall.setImageBitmap(bmp);
             root.addView(wall, 0, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            wallView = wall;
+            root.setBackground(null);   // the picture covers the screen; the colour under it would be overdraw
         } catch (Exception | OutOfMemoryError e) {
             // A bad or huge picture must never take the home screen down; the plain colour stays.
         }
@@ -350,26 +418,50 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onResume() {
         super.onResume();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(packageReceiver, packageFilter, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(packageReceiver, packageFilter);
-        }
+        resumed = true;
         tilesReady = false;
         promptsPaused = false;
-        reloadApps(true);
+        if (wallpaperFile != null && wallView == null) showWallpaper(wallpaperFile);   // dropped by onTrimMemory
+        // Both checks run every time: packagesChanged() also moves the counter on.
+        boolean changed = packagesChanged();
+        reloadApps(true, changed || tilesStale);
         updateGreeting();
         updateWifiLabel();
         updateInputsButton();
         handler.postDelayed(minuteTick, MINUTE_MS);
+        startTicker();
+        Updater.installListener = () -> handler.post(() -> {
+            if (updatePrompt != null) updatePrompt.dismiss();
+        });
+        updateUpdateDot();
+        checkWeekly();
     }
 
-    /** Rebuilds the tiles (and the module cards), then puts focus back where it was. */
-    private void reloadApps(boolean animate) {
+    /**
+     * True when a package was added, removed or updated since the last call (or the platform can't say).
+     * One cheap call; when it says nothing changed, coming back Home skips the app and card scan.
+     */
+    private boolean packagesChanged() {
+        try {
+            ChangedPackages cp = getPackageManager().getChangedPackages(packageSeq);
+            if (cp == null) return false;
+            packageSeq = cp.getSequenceNumber();
+            return true;
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    /**
+     * Puts focus back where it was, after rebuilding the tiles (and the module cards) when reload is set.
+     * resume: Home is coming to the front, so the glass and the hero fade back in on the returning tile.
+     */
+    private void reloadApps(boolean resume, boolean reload) {
+        final boolean animate = resume && reload && !tilesShown;
         // Capture the app before rebinding can move focus and overwrite its key.
         final String returnKey = lastFocusedKey;
         final int returnSlot = lastFocused;
-        final boolean restoreFocus = animate || grid.hasFocus();
+        final boolean restoreFocus = resume || grid.hasFocus();
         if (restoreFocus) {
             glassShown = false;
             glass.setAlpha(0f);
@@ -377,8 +469,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             heroName.setAlpha(0f);
             ambient.setAlpha(0f);
         }
-        reloadTiles();
+        if (reload) reloadTiles();
         if (animate) grid.scheduleLayoutAnimation();
+        tilesShown = true;
 
         if (restoreFocus) {
             // Follow the same app, or the nearest remaining slot when it was removed.
@@ -405,8 +498,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         final String returnKey = lastFocusedKey;
         final int returnSlot = lastFocused;
         final List<Cards.Card> none = Collections.emptyList();
-        cards = moduleCards ? CardFeature.run(() -> Cards.discover(this, hiddenApps, Cards.load(Cards.storeFile(this))), none) : none;
-        adapter.reload(cards.isEmpty() ? none : CardFeature.run(() -> Cards.shown(cards), none));
+        // One LEANBACK query for both the tiles and the card checks.
+        final List<ResolveInfo> leanback = getPackageManager().queryIntentActivities(
+                new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER), 0);
+        cards = moduleCards ? CardFeature.run(() -> Cards.discover(this, hiddenApps, () -> Cards.load(Cards.storeFile(this)), leanback), none) : none;
+        adapter.reload(cards.isEmpty() ? none : CardFeature.run(() -> Cards.shown(cards), none), leanback);
+        tilesStale = false;
         lastFocusedKey = returnKey;
         lastFocused = returnSlot;
     }
@@ -429,11 +526,38 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onPause() {
         super.onPause();
-        unregisterReceiver(packageReceiver);
+        resumed = false;
         handler.removeCallbacks(minuteTick);
+        handler.removeCallbacks(btcTick);
         // Nothing of ours stays on screen over another app; an undecided prompt simply returns next time.
         if (cardPrompt != null) cardPrompt.dismiss();
+        if (updatePrompt != null) updatePrompt.dismiss();
         if (openPopup != null) openPopup.dismiss();
+        Updater.installListener = null;
+    }
+
+    /**
+     * Another app needs the memory while Home is in the background: let go of every tile's artwork and
+     * the wallpaper, and rebuild them when Home comes back. Not at UI_HIDDEN, the ordinary trip to an
+     * app, where keeping them is what makes the return instant.
+     */
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        // RUNNING_LOW and CRITICAL also arrive while Home is hidden when an accessibility service keeps
+        // the process in the foreground; never blank the screen the owner is looking at.
+        boolean due = level >= TRIM_MEMORY_BACKGROUND
+                || level == TRIM_MEMORY_RUNNING_LOW || level == TRIM_MEMORY_RUNNING_CRITICAL;
+        if (!due || resumed) return;
+        adapter.clear();
+        tilesStale = true;
+        tilesShown = false;
+        if (wallView != null) {
+            wallView.setImageDrawable(null);
+            root.removeView(wallView);
+            wallView = null;
+            root.setBackgroundColor(backgroundColor);
+        }
     }
 
     @Override
@@ -445,6 +569,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        unregisterReceiver(packageReceiver);
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
         if (tim != null) tim.unregisterCallback(inputCallback);
@@ -626,7 +751,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         else if (hour < 17) res = R.string.good_afternoon;
         else if (hour < 22) res = R.string.good_evening;
         else res = R.string.good_night;
-        greeting.setText(res);
+        greeting.setText(greetingName.isEmpty() ? getString(res) : getString(res) + ", " + greetingName);
         if (shamsi) shamsiDate.setText(Shamsi.today());
     }
 
@@ -910,6 +1035,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      * the next one follows as soon as this one is answered. Nothing is shown until the owner says Show.
      */
     private void showCardPrompt() {
+        showCardPromptIfDue();
+        showUpdatePrompt();   // waits for every card prompt to be answered
+    }
+
+    private void showCardPromptIfDue() {
         if (!moduleCards || !tilesReady || promptsPaused || cardPrompt != null || !hasWindowFocus() || isFinishing()) return;
         if (cards.isEmpty() || !CardFeature.working()) return;
         CardFeature.run(() -> {
@@ -937,16 +1067,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         TextView keep = panel.findViewById(R.id.btnKeep);
         TextView show = panel.findViewById(R.id.btnShow);
 
-        final Dialog dialog = new Dialog(this);
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        dialog.setContentView(panel);
-        dialog.setCanceledOnTouchOutside(false);
-        Window w = dialog.getWindow();
-        if (w != null) {
-            w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            w.setLayout((int) (440 * density), ViewGroup.LayoutParams.WRAP_CONTENT);
-            w.setDimAmount(0.6f);
-        }
+        final Dialog dialog = glassDialog(panel);
         // One decision per prompt: the buttons and Back (cancel) all end here.
         final boolean[] decided = {false};
         View.OnClickListener choose = v -> {
@@ -975,6 +1096,21 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         cardPrompt = dialog;
         dialog.show();
         keep.requestFocus();
+    }
+
+    /** A centred glass panel over the dimmed home screen: the card and update prompts. */
+    private Dialog glassDialog(View panel) {
+        final Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setContentView(panel);
+        dialog.setCanceledOnTouchOutside(false);
+        Window w = dialog.getWindow();
+        if (w != null) {
+            w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            w.setLayout((int) (440 * density), ViewGroup.LayoutParams.WRAP_CONTENT);
+            w.setDimAmount(0.6f);
+        }
+        return dialog;
     }
 
     /** Writes the owner's decision and rebuilds the tiles; focus is left where it is. */
@@ -1067,5 +1203,327 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             default:
                 return getString(R.string.card_state_new);
         }
+    }
+
+    // ---- Bitcoin line ----------------------------------------------------------------------------
+
+    /** Shows the last reading at once, then refreshes now if it's over a minute old and every five minutes after. */
+    private void startTicker() {
+        if (!btcOn) {
+            btcTicker.setVisibility(View.GONE);
+            return;
+        }
+        showTicker(Ticker.last);
+        Ticker.Quote q = Ticker.last;
+        long age = q == null ? Long.MAX_VALUE : System.currentTimeMillis() - q.at;
+        handler.postDelayed(btcTick, age >= Ticker.STALE_MS ? 0 : Math.max(0, Ticker.REFRESH_MS - age));
+    }
+
+    /** One refresh on the ticker thread; the result is shown if the line is still on. */
+    private void fetchTicker() {
+        ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+        if (cm == null || cm.getActiveNetwork() == null) return;
+        if (!Ticker.busy.compareAndSet(false, true)) return;
+        Ticker.EXECUTOR.execute(() -> {
+            try {
+                Ticker.last = Ticker.fetch(Ticker.last);
+            } catch (Exception e) {
+                // A failed refresh keeps the last reading on screen.
+            } finally {
+                Ticker.busy.set(false);
+            }
+            handler.post(() -> {
+                if (!isDestroyed() && btcOn) showTicker(Ticker.last);
+            });
+        });
+    }
+
+    /** "₿ $81,002  ▼ 0.3%  BLOCK 972,026"; hidden until there is a price. */
+    private void showTicker(Ticker.Quote q) {
+        if (q == null || !q.hasPrice()) {
+            btcTicker.setVisibility(View.GONE);
+            return;
+        }
+        SpannableStringBuilder sb = new SpannableStringBuilder();
+        // Older TVs' fonts may lack U+20BF; spell it out there.
+        String sign = btcTicker.getPaint().hasGlyph("\u20BF") ? "\u20BF" : "BTC";
+        append(sb, sign, 0xFFF7931A);
+        sb.append("  ").append(Ticker.formatPrice(q.price));
+        if (!Double.isNaN(q.changePct)) {
+            sb.append("   ");
+            append(sb, Ticker.formatChange(q.changePct), q.changePct < 0 ? 0xFFFF6B6B : 0xFF4CD787);
+        }
+        if (q.height >= 0) {
+            sb.append("   ");
+            append(sb, getString(R.string.btc_block, Ticker.formatHeight(q.height)), 0xB3FFFFFF);
+        }
+        btcTicker.setText(sb);
+        btcTicker.setVisibility(View.VISIBLE);
+    }
+
+    private static void append(SpannableStringBuilder sb, String text, int color) {
+        int start = sb.length();
+        sb.append(text);
+        sb.setSpan(new ForegroundColorSpan(color), start, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    }
+
+    // ---- self-update -----------------------------------------------------------------------------
+
+    /** Hold OK on Settings: Module cards, and Check for updates with the installed version. */
+    private void showSettingsMenu() {
+        View anchor = btnSettings;
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        final PopupWindow popup = glassPopup(panel, (int) (340 * density));
+
+        String cardsState = !moduleCards || !CardFeature.working() ? getString(R.string.settings_menu_off)
+                : cards.isEmpty() ? getString(R.string.no_module_cards)
+                : getString(R.string.settings_menu_cards_count, cards.size());
+        View cardsRow = addMenuRow(rows, getString(R.string.settings_menu_cards), cardsState);
+        cardsRow.setOnClickListener(v -> {
+            popup.dismiss();
+            showModuleCards();
+        });
+
+        View btcRow = addMenuRow(rows, getString(R.string.settings_menu_btc),
+                getString(btcOn ? R.string.settings_menu_on : R.string.settings_menu_off));
+        final TextView btcStatus = btcRow.findViewById(R.id.status);
+        btcRow.setOnClickListener(v -> {
+            btcOn = !btcOn;
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_BTC, btcOn).apply();
+            btcStatus.setText(btcOn ? R.string.settings_menu_on : R.string.settings_menu_off);
+            handler.removeCallbacks(btcTick);
+            startTicker();
+        });
+
+        View checkRow = addMenuRow(rows, getString(R.string.update_menu_check, BuildConfig.VERSION_NAME), updateState());
+        final TextView status = checkRow.findViewById(R.id.status);
+        checkRow.setOnClickListener(v -> {
+            String state = updateState();
+            if (!updatesOn()) {
+                status.setText(state);
+                return;
+            }
+            status.setText(R.string.update_checking);
+            runCheck(status, popup);
+        });
+
+        dropIn(popup, panel, anchor, Gravity.END);
+        rows.getChildAt(0).requestFocus();
+    }
+
+    private View addMenuRow(LinearLayout rows, String title, String status) {
+        View row = getLayoutInflater().inflate(R.layout.item_menu_row, rows, false);
+        ((TextView) row.findViewById(R.id.title)).setText(title);
+        TextView s = row.findViewById(R.id.status);
+        s.setText(status);
+        rows.addView(row);
+        return row;
+    }
+
+    /** The Check for updates row before a check: why there are no updates, or the version already found. */
+    private String updateState() {
+        if (Updater.feedUrl().isEmpty()) return getString(R.string.update_self_built);
+        if (!updatesOn()) return getString(R.string.update_off);
+        Updater.Feed f = offered;
+        return f != null ? getString(R.string.update_available, f.versionName) : "";
+    }
+
+    /** A build with a feed, self_update not off, and the updater hasn't failed in this process. */
+    private boolean updatesOn() {
+        return !Updater.feedUrl().isEmpty() && !Updater.MODE_OFF.equals(selfUpdate) && UpdateFeature.working();
+    }
+
+    /** Weekly mode: check when the last check is a week old (a day after a failure) and the TV is online. */
+    private void checkWeekly() {
+        if (!updatesOn() || !Updater.MODE_WEEKLY.equals(selfUpdate)) return;
+        ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+        if (cm == null || cm.getActiveNetwork() == null) return;
+        boolean due = UpdateFeature.run(() -> Updater.checkDue(Updater.load(Updater.stateFile(this)), System.currentTimeMillis()), false);
+        if (due) runCheck(null, null);
+    }
+
+    /** One check on the update thread. status and popup are the Settings menu's, for a check the owner asked for. */
+    private void runCheck(final TextView status, final PopupWindow popup) {
+        if (!Updater.busy.compareAndSet(false, true)) return;   // a check or a download is already running
+        final Context app = getApplicationContext();
+        Updater.EXECUTOR.execute(() -> {
+            Updater.Outcome o;
+            try {
+                o = UpdateFeature.run(() -> Updater.check(app), null);
+            } finally {
+                Updater.busy.set(false);
+            }
+            final Updater.Outcome outcome = o;
+            handler.post(() -> {
+                if (!isDestroyed()) UpdateFeature.run(() -> {
+                    checked(outcome, status, popup);
+                    return null;
+                }, null);
+            });
+        });
+    }
+
+    private void checked(Updater.Outcome o, TextView status, PopupWindow popup) {
+        boolean manual = status != null;
+        if (o == null) {
+            if (manual) status.setText(R.string.update_off);
+            return;
+        }
+        switch (o.kind) {
+            case Updater.AVAILABLE:
+                offered = o.feed;
+                // The weekly check doesn't ask again about a skipped version; the owner's own check does.
+                if (manual || o.feed.versionCode != Updater.load(Updater.stateFile(this)).skipped) updatePromptDue = true;
+                if (manual) status.setText(getString(R.string.update_available, o.feed.versionName));
+                break;
+            case Updater.UP_TO_DATE:
+                offered = null;
+                if (manual) status.setText(R.string.update_up_to_date);
+                break;
+            case Updater.TOO_OLD:
+                offered = null;
+                if (manual) status.setText(getString(R.string.update_too_old, o.feed.versionName));
+                break;
+            case Updater.Outcome.INVALID:
+                if (manual) status.setText(R.string.update_invalid);
+                break;
+            default:
+                if (manual) status.setText(R.string.update_unreachable);
+                break;
+        }
+        // The prompt follows straight away; the menu makes room for it.
+        if (manual && updatePromptDue && popup != null && popup.isShowing()) popup.dismiss();
+        updateUpdateDot();
+        showUpdatePrompt();
+    }
+
+    /** A dot on the Settings pill while a newer version is known and not skipped. */
+    private void updateUpdateDot() {
+        boolean waiting = updatesOn() && UpdateFeature.run(() -> {
+            Updater.State st = Updater.load(Updater.stateFile(this));
+            return st.availableCode > BuildConfig.VERSION_CODE && st.availableCode != st.skipped;
+        }, false);
+        // drawableTint covers the dot too, so it follows the pill's text colour as the icon does.
+        btnSettings.setCompoundDrawablesRelativeWithIntrinsicBounds(getDrawable(R.drawable.ic_settings), null,
+                waiting ? getDrawable(R.drawable.update_dot) : null, null);
+    }
+
+    /**
+     * Asks about the version the last check found: once its check is done, over a laid out grid with
+     * window focus, after every module card prompt has been answered. Nothing installs without Update.
+     */
+    private void showUpdatePrompt() {
+        if (!updatePromptDue || offered == null || updatePrompt != null || cardPrompt != null || openPopup != null) return;
+        if (!tilesReady || !hasWindowFocus() || isFinishing() || !updatesOn()) return;
+        if (moduleCards && !promptsPaused && !cards.isEmpty() && CardFeature.working()
+                && CardFeature.run(() -> Cards.firstPending(cards), null) != null) return;
+        UpdateFeature.run(() -> {
+            showUpdatePromptNow();
+            return null;
+        }, null);
+    }
+
+    private void showUpdatePromptNow() {
+        final Updater.Feed feed = offered;
+        View panel = getLayoutInflater().inflate(R.layout.dialog_update_prompt, root, false);
+        ((TextView) panel.findViewById(R.id.title)).setText(getString(R.string.update_prompt_title, feed.versionName));
+        ((TextView) panel.findViewById(R.id.body)).setText(getString(R.string.update_prompt_body, BuildConfig.VERSION_NAME));
+        TextView notes = panel.findViewById(R.id.notes);
+        if (feed.notes.isEmpty()) notes.setVisibility(View.GONE);
+        else notes.setText(feed.notes);
+        final TextView status = panel.findViewById(R.id.status);
+        final TextView later = panel.findViewById(R.id.btnLater);
+        final TextView update = panel.findViewById(R.id.btnUpdate);
+        final TextView skip = panel.findViewById(R.id.btnSkip);
+
+        final Dialog dialog = glassDialog(panel);
+        final AtomicBoolean cancel = new AtomicBoolean();
+        later.setOnClickListener(v -> {
+            updatePromptDue = false;   // the dot stays; the next weekly check asks again
+            dialog.dismiss();
+        });
+        skip.setOnClickListener(v -> {
+            updatePromptDue = false;
+            UpdateFeature.run(() -> {
+                File file = Updater.stateFile(this);
+                Updater.State st = Updater.load(file);
+                st.skipped = feed.versionCode;
+                return Updater.save(file, st);
+            }, false);
+            dialog.dismiss();
+            updateUpdateDot();
+        });
+        update.setOnClickListener(v -> UpdateFeature.run(() -> {
+            startUpdate(feed, dialog, cancel, status, later, update, skip);
+            return null;
+        }, null));
+        dialog.setOnCancelListener(d -> later.performClick());   // Back means Later, and cancels a download
+        dialog.setOnDismissListener(d -> {
+            cancel.set(true);
+            if (updatePrompt == dialog) updatePrompt = null;
+        });
+        // Left and Right move between the buttons; Up and Down stay put; the ends don't wrap.
+        View.OnKeyListener keys = (v, keyCode, event) -> {
+            if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+            if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) return true;
+            if (update.getVisibility() != View.VISIBLE) return keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT;
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) return v.getId() == R.id.btnLater;
+            return keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && v.getId() == R.id.btnSkip;
+        };
+        later.setOnKeyListener(keys);
+        update.setOnKeyListener(keys);
+        skip.setOnKeyListener(keys);
+        updatePrompt = dialog;
+        dialog.show();
+        later.requestFocus();
+    }
+
+    /** Update pressed: the install permission first, then download, verify and install on the update thread. */
+    private void startUpdate(Updater.Feed feed, Dialog dialog, AtomicBoolean cancel, TextView status,
+                             View later, View update, View skip) {
+        status.setVisibility(View.VISIBLE);
+        if (!getPackageManager().canRequestPackageInstalls()) {
+            // The prompt comes back when Home does, and the owner presses Update again.
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+                Toast.makeText(this, R.string.update_permission, Toast.LENGTH_LONG).show();
+            } catch (ActivityNotFoundException | SecurityException e) {
+                status.setText(R.string.update_permission_adb);
+            }
+            return;
+        }
+        if (!Updater.busy.compareAndSet(false, true)) {
+            status.setText(R.string.update_checking);   // a weekly check is still running; try again in a moment
+            return;
+        }
+        update.setVisibility(View.GONE);
+        skip.setVisibility(View.GONE);
+        later.requestFocus();   // Later now cancels the download
+        status.setText(getString(R.string.update_downloading, 0));
+        final Context app = getApplicationContext();
+        Updater.EXECUTOR.execute(() -> {
+            int result;
+            try {
+                result = UpdateFeature.run(() -> Updater.update(app, feed, cancel, (stage, percent) -> handler.post(() -> {
+                    if (cancel.get()) return;
+                    status.setText(stage == Updater.Progress.DOWNLOADING ? getString(R.string.update_downloading, percent)
+                            : getString(stage == Updater.Progress.VERIFYING ? R.string.update_verifying : R.string.update_installing));
+                })), Updater.FAILED_INSTALL);
+            } finally {
+                Updater.busy.set(false);
+            }
+            final int done = result;
+            handler.post(() -> {
+                if (done == Updater.DONE) {
+                    // Android takes it from here; declining its confirmation counts as Later.
+                    updatePromptDue = false;
+                    return;
+                }
+                if (done == Updater.CANCELLED || isDestroyed() || !dialog.isShowing()) return;
+                status.setText(done == Updater.FAILED_DOWNLOAD ? R.string.update_download_failed
+                        : done == Updater.REJECTED ? R.string.update_rejected : R.string.update_install_failed);
+            });
+        });
     }
 }

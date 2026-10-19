@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The self-update prompt: the new version and its notes, a status line for the download, three buttons.
+     Later is focused first; Back means Later too. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/glass_panel"
+    android:paddingStart="26dp"
+    android:paddingEnd="26dp"
+    android:paddingTop="22dp"
+    android:paddingBottom="20dp"
+    android:elevation="12dp">
+
+    <TextView
+        android:id="@+id/title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:textColor="#FFFFFFFF"
+        android:textSize="22sp"
+        android:fontFamily="@font/outfit"
+        android:fontVariationSettings="'wght' 500"
+        android:letterSpacing="-0.01" />
+
+    <TextView
+        android:id="@+id/body"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:textColor="#D9FFFFFF"
+        android:textSize="15sp"
+        android:lineSpacingExtra="3sp"
+        android:fontFamily="@font/outfit" />
+
+    <TextView
+        android:id="@+id/notes"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:maxLines="4"
+        android:ellipsize="end"
+        android:textColor="#99FFFFFF"
+        android:textSize="13sp"
+        android:fontFamily="@font/outfit" />
+
+    <TextView
+        android:id="@+id/status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:visibility="gone"
+        android:textColor="#D9FFFFFF"
+        android:textSize="13sp"
+        android:fontFamily="@font/outfit" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="18dp"
+        android:orientation="horizontal"
+        android:gravity="end">
+
+        <TextView
+            android:id="@+id/btnLater"
+            style="@style/TopButton"
+            android:text="@string/update_later"
+            android:nextFocusUp="@+id/btnLater"
+            android:nextFocusDown="@+id/btnLater"
+            android:nextFocusLeft="@+id/btnLater"
+            android:nextFocusRight="@+id/btnUpdate" />
+
+        <TextView
+            android:id="@+id/btnUpdate"
+            style="@style/TopButton"
+            android:text="@string/update_now"
+            android:nextFocusUp="@+id/btnUpdate"
+            android:nextFocusDown="@+id/btnUpdate"
+            android:nextFocusLeft="@+id/btnLater"
+            android:nextFocusRight="@+id/btnSkip" />
+
+        <TextView
+            android:id="@+id/btnSkip"
+            style="@style/TopButton"
+            android:text="@string/update_skip"
+            android:nextFocusUp="@+id/btnSkip"
+            android:nextFocusDown="@+id/btnSkip"
+            android:nextFocusLeft="@+id/btnUpdate"
+            android:nextFocusRight="@+id/btnSkip" />
+    </LinearLayout>
+</LinearLayout>

@@ -25,6 +25,7 @@ import java.util.List;
  * {@code tools/theme.sh themes/<name>} pushes a theme folder there and restarts Home.
  *
  * Read once in {@link MainActivity#onCreate}; nothing here touches the network.
+ * (self_update only says whether {@link Updater} may.)
  */
 final class Config {
     private static final String TAG = "TvHome.Config";
@@ -44,6 +45,12 @@ final class Config {
     final boolean moduleCards;
     final String vpnApp;
     final boolean showHomeSettingsShortcut;
+    /** Self-update: off, manual or weekly (docs/specs/self-update.md). No effect in a build without a feed. */
+    final String selfUpdate;
+    /** The Bitcoin price line above the top buttons (Ticker); the Settings menu can override it on the TV. */
+    final boolean btcTicker;
+    /** Name after the greeting ("Good morning, Mr. Trịnh"); empty for the greeting alone. */
+    final String greetingName;
     /** Background colour behind everything, #RRGGBB; black unless a theme says otherwise. */
     final int backgroundColor;
     /** Full-screen picture behind the launcher, or null for the plain colour. */
@@ -54,7 +61,7 @@ final class Config {
     private Config(List<String> dockApps, List<String> hiddenApps, String liveTvPackage, String liveTvAction,
                    String sourcePanelService, String sourcePanelAction, String inputAction,
                    int columns, int rowsBelowDock,
-                   boolean shamsiDate, boolean moduleCards, String vpnApp, boolean showHomeSettingsShortcut, int backgroundColor,
+                   boolean shamsiDate, boolean moduleCards, String vpnApp, boolean showHomeSettingsShortcut, String selfUpdate, boolean btcTicker, String greetingName, int backgroundColor,
                    File wallpaper, boolean overlayApplied) {
         this.dockApps = Collections.unmodifiableList(dockApps);
         this.hiddenApps = Collections.unmodifiableList(hiddenApps);
@@ -69,6 +76,9 @@ final class Config {
         this.moduleCards = moduleCards;
         this.vpnApp = vpnApp;
         this.showHomeSettingsShortcut = showHomeSettingsShortcut;
+        this.selfUpdate = selfUpdate;
+        this.btcTicker = btcTicker;
+        this.greetingName = greetingName;
         this.backgroundColor = backgroundColor;
         this.wallpaper = wallpaper;
         this.overlayApplied = overlayApplied;
@@ -94,6 +104,9 @@ final class Config {
         boolean moduleCards = res.getBoolean(R.bool.module_cards);
         String vpn = res.getString(R.string.vpn_app).trim();
         boolean homeSettings = res.getBoolean(R.bool.show_home_settings_shortcut);
+        String selfUpdate = res.getString(R.string.self_update);
+        boolean btc = res.getBoolean(R.bool.btc_ticker);
+        String name = res.getString(R.string.greeting_name).trim();
         int background = 0xFF000000;
         boolean applied = false;
 
@@ -115,6 +128,9 @@ final class Config {
             moduleCards = bool(json, "module_cards", moduleCards);
             vpn = string(json, "vpn_app", vpn);
             homeSettings = bool(json, "show_home_settings_shortcut", homeSettings);
+            selfUpdate = string(json, "self_update", selfUpdate);
+            btc = bool(json, "btc_ticker", btc);
+            name = string(json, "greeting_name", name).trim();
             background = color(json, "background_color", background);
         }
         File wallpaper = dir != null ? new File(dir, WALLPAPER_NAME) : null;
@@ -123,7 +139,7 @@ final class Config {
         if (json != null && json.has("wallpaper") && !bool(json, "wallpaper", true)) wallpaper = null;
 
         return new Config(dock, hidden, liveTv, liveTvAction, panelService, panelAction, inputAction,
-                Math.max(1, columns), Math.max(0, rowsBelow), shamsi, moduleCards, vpn, homeSettings, background,
+                Math.max(1, columns), Math.max(0, rowsBelow), shamsi, moduleCards, vpn, homeSettings, Updater.mode(selfUpdate), btc, name, background,
                 wallpaper, applied);
     }
 
